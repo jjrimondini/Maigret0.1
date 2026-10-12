@@ -1,7 +1,8 @@
 /*
- * main.js — Cuore del gioco "Maigret: Caccia alla Fuga".
- * Gestisce la mappa, il giocatore (Maigret), la cattura dei criminali,
- * l'input da tastiera, il disegno sul canvas e il ciclo di gioco.
+ * main.js — Cuore del gioco "Guardie e Ladri".
+ * Gestisce la mappa, il giocatore (il commissario Maigret), la cattura dei criminali,
+ * l'input da tastiera, la schermata iniziale, la pausa, il disegno sul canvas
+ * e il ciclo di gioco.
  * Il movimento dei criminali è delegato a move-criminals.js.
  */
 
@@ -120,6 +121,17 @@ let lastFrame = 0;
 const visuals = new WeakMap();
 const effects = [];
 let background = null;
+
+/*
+ * Schermate:
+ * - screen: "title" (schermata iniziale) oppure "playing" (partita in corso)
+ * - paused: true mentre il gioco è in pausa (tasto ESC)
+ * - escapedCriminal: il criminale che è appena fuggito, per mostrarlo
+ *   sul volantino "RICERCATO"
+ */
+let screen = "title";
+let paused = false;
+let escapedCriminal = null;
 
 /*
  * funzione loadlevel per caricare i livelli da levels.js
@@ -270,7 +282,7 @@ function checkCapture() {
       statusText.textContent += " | Premi INVIO per il livello successivo";
     } else {
       statusText.textContent =
-        `Gioco completato! Punteggio finale: ${game.score}`;
+        `Gioco completato! Punteggio finale: ${game.score} | Premi INVIO per tornare al menu`;
     }
   }
 }
@@ -286,6 +298,7 @@ function checkEscape(criminal) {
   if (!escaped) return;
 
   game.gameOver = true;
+  escapedCriminal = criminal;
   game.lives--;
   updateLives();
 
@@ -296,7 +309,7 @@ function checkEscape(criminal) {
   } else {
     gameLost = true;
     statusText.textContent =
-      `GAME OVER | Punteggio finale: ${game.score} | Premi INVIO per ricominciare`;
+      `GAME OVER | Punteggio finale: ${game.score} | Premi INVIO per tornare al menu`;
   }
 }
 /*
@@ -322,12 +335,50 @@ function checkBonusLife() {
   }
 }
 /*
+ * startGame(): inizia una nuova partita dal primo livello ("INSERT COIN").
+ */
+function startGame() {
+  restart();
+  screen = "playing";
+  paused = false;
+}
+
+/*
+ * showTitle(): torna alla schermata iniziale. Carica il primo livello solo
+ * per dare al canvas le dimensioni giuste; nessuno si muove finché non si gioca.
+ */
+function showTitle() {
+  restart();
+  screen = "title";
+  paused = false;
+  document.getElementById("level-info").textContent = "MENU";
+  statusText.textContent = "INSERT COIN O PREMI INVIO PER GIOCARE";
+}
+
+/*
+ * togglePause(): mette in pausa o riprende, solo durante una partita in corso.
+ * Alla ripresa i timer ripartono da adesso, così nessuno fa un passo "di colpo".
+ */
+function togglePause() {
+  if (screen !== "playing" || game.gameOver) return;
+  paused = !paused;
+  if (!paused) {
+    lastPlayerMove = now;
+    lastEnemyMove = now;
+  }
+}
+
+/*
  * Gestione della tastiera e del pulsante:
  * - keydown: quando un tasto viene premuto lo segna come "giù" in keys.
  *   Per frecce, WASD e spazio blocca il comportamento predefinito del browser
- *   (che altrimenti farebbe scorrere la pagina). Il tasto R riavvia la partita.
+ *   (che altrimenti farebbe scorrere la pagina).
+ *   Sulla schermata iniziale INVIO fa partire la partita; durante il gioco
+ *   ESC mette in pausa, R ricomincia e INVIO a fine livello prosegue,
+ *   riprova il livello oppure (game over / gioco finito) torna al menu.
  * - keyup: quando il tasto viene rilasciato lo segna come "su".
- * - click sul pulsante "Nuova partita": riavvia la partita.
+ * - click sul pulsante "INSERT COIN": inizia una nuova partita.
+ * - blur: se la finestra perde il focus il gioco va in pausa da solo.
  * Nota: qui i tasti vengono solo registrati; il movimento vero avviene in loop().
  */
 document.addEventListener("keydown", e => {
@@ -336,27 +387,40 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
   }
   keys[k] = true;
-  if (k === "r") restart();
-  if (
-    e.key === "Enter" &&
-    game.gameOver &&
-    levelComplete
-  ) {
-    loadLevel(currentLevelIndex + 1);
+
+  if (screen === "title") {
+    if (e.key === "Enter") startGame();
+    return;
   }
-  if (e.key === "Enter" && game.gameOver && levelLost) {
-    game.score = scoreAtLevelStart;
-    loadLevel(currentLevelIndex);
+
+  if (k === "escape") {
+    togglePause();
+    return;
   }
-  if (e.key === "Enter" && game.gameOver && gameLost) {
-    restart();
+  if (paused) return;
+
+  if (k === "r") startGame();
+  if (e.key === "Enter" && game.gameOver) {
+    if (levelComplete) {
+      loadLevel(currentLevelIndex + 1);
+    } else if (levelLost) {
+      game.score = scoreAtLevelStart;
+      loadLevel(currentLevelIndex);
+    } else {
+      // game over oppure gioco completato
+      showTitle();
+    }
   }
 });
 document.getElementById("restart").addEventListener("click", e => {
-  restart();
+  startGame();
   e.currentTarget.blur();
 });
-document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; })
+document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;
+  if (screen === "playing" && !game.gameOver && !paused) togglePause();
+});
 
 /*
  * ===================== GRAFICA ARCADE =====================
@@ -612,23 +676,29 @@ function drawHands(left, bodyTop, side, frame, palette, mirror) {
 }
 
 /*
- * drawCharacter(entity, sprite, palette, pipe): disegna un personaggio nella
- * sua posizione fluida, con ombra, gambe e mani animate, e un piccolo
- * rimbalzo del corpo a ogni passo. Da fermo "respira" (sale e scende di 1px).
- * Se pipe è true (Maigret) dalla pipa esce un filo di fumo quando è fermo.
+ * drawSprite(cx, feetY, opts): disegna un personaggio in un punto qualsiasi
+ * (in pixel: cx = centro orizzontale, feetY = dove poggiano i piedi), con
+ * ombra, gambe e mani animate e un piccolo rimbalzo del corpo a ogni passo.
+ * Da fermo "respira" (sale e scende di 1px).
+ * opts:
+ * - sprite, palette: quale personaggio e con quali colori
+ * - dir: "up" | "down" | "left" | "right"
+ * - walking, walkTime: se sta camminando e da quanto (per il fotogramma)
+ * - pipe: dalla pipa esce un filo di fumo quando è fermo (Maigret)
+ * - hatUp: Maigret alza il cappello per salutare (schermata di vittoria)
+ * - sack: il ladro porta sulle spalle il sacco del bottino
+ * È usata sia in gioco (drawCharacter) sia nelle schermate (menu, pausa, fine).
  */
-function drawCharacter(entity, sprite, palette, pipe = false) {
-  const v = getVisual(entity);
-  const walking = isWalking(v);
-  const frame = walking ? Math.floor(v.walkTime / WALK_FRAME_MS) % 4 : 0;
+function drawSprite(cx, feetY, opts) {
+  const { sprite, palette, dir = "down", walking = false, walkTime = 0 } = opts;
+  const frame = walking ? Math.floor(walkTime / WALK_FRAME_MS) % 4 : 0;
   const bob = walking ? (frame % 2 === 0 ? -2 : 0) : (Math.floor(now / 600) % 2 ? -1 : 0);
 
-  const cx = v.rx * TILE + TILE / 2;
-  const feetY = Math.round(v.ry * TILE + TILE - 2);
   const left = Math.round(cx - (SPRITE_COLS / 2) * U);
   const bodyTop = feetY - SPRITE_ROWS * U + bob;
-  const side = v.dir === "left" || v.dir === "right";
-  const mirror = v.dir === "left";
+  const side = dir === "left" || dir === "right";
+  const mirror = dir === "left";
+  let rows = sprite[side ? "right" : dir];
 
   // Ombra
   ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
@@ -636,12 +706,32 @@ function drawCharacter(entity, sprite, palette, pipe = false) {
   ctx.ellipse(cx, feetY, 12, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Sacco del bottino, dietro la schiena (va disegnato prima del corpo)
+  if (opts.sack && side) {
+    block(left, 0, bodyTop + 2 * U, 4, 6 * U, "#713f12", mirror);
+    block(left, 1, bodyTop + 3 * U, 2, 4 * U, "#ca8a04", mirror);
+    block(left, 3, bodyTop + 2 * U, 2, U, "#713f12", mirror);
+  }
+
+  // Cappello alzato: al posto del cappello si vedono i capelli
+  if (opts.hatUp && !side) {
+    rows = ["............", "............", "...RRRRRR...", ...rows.slice(3)];
+  }
+
   drawLegs(left, bodyTop + 10 * U, feetY, side, frame, palette, mirror);
-  drawBitmap(sprite[side ? "right" : v.dir], left, bodyTop, palette, mirror);
+  drawBitmap(rows, left, bodyTop, palette, mirror);
   drawHands(left, bodyTop, side, frame, palette, mirror);
 
+  if (opts.hatUp && !side) {
+    // braccio alzato e cappello che sventola sopra la testa
+    const wave = Math.round(Math.sin(now / 150) * 2);
+    block(left, 11, bodyTop, 1, 7 * U, palette.C, mirror);
+    block(left, 11, bodyTop - U + wave, 1, U + 2, palette.S, mirror);
+    drawBitmap(sprite.down.slice(0, 3), left + U, bodyTop - 4 * U + wave, palette, mirror);
+  }
+
   // Fumo della pipa: due sbuffi che salgono e svaniscono
-  if (pipe && !walking && v.dir !== "up") {
+  if (opts.pipe && !walking && dir !== "up" && !opts.hatUp) {
     const pipeCol = side ? 11 : 10;
     const px = left + (mirror ? SPRITE_COLS - 1 - pipeCol : pipeCol) * U;
     const py = bodyTop + 5 * U;
@@ -651,6 +741,29 @@ function drawCharacter(entity, sprite, palette, pipe = false) {
       ctx.fillRect(px + Math.round(Math.sin(t * 6) * 2), py - 4 - t * 16, U - 1, U - 1);
     }
   }
+}
+
+/*
+ * drawSpriteScaled(cx, feetY, scale, opts): come drawSprite ma ingrandito
+ * (per le schermate, dove i personaggi sono più grandi che in gioco).
+ */
+function drawSpriteScaled(cx, feetY, scale, opts) {
+  ctx.save();
+  ctx.translate(cx, feetY);
+  ctx.scale(scale, scale);
+  drawSprite(0, 0, opts);
+  ctx.restore();
+}
+
+/*
+ * drawCharacter(entity, sprite, palette, pipe): disegna un personaggio del
+ * gioco nella sua posizione fluida (presa da getVisual).
+ */
+function drawCharacter(entity, sprite, palette, pipe = false) {
+  const v = getVisual(entity);
+  drawSprite(v.rx * TILE + TILE / 2, Math.round(v.ry * TILE + TILE - 2), {
+    sprite, palette, pipe, dir: v.dir, walking: isWalking(v), walkTime: v.walkTime
+  });
 }
 
 /*
@@ -819,6 +932,7 @@ function spawnCaptureEffect(c) {
 function updateEffects(dt) {
   for (let i = effects.length - 1; i >= 0; i--) {
     const e = effects[i];
+    e.vy += (e.g ?? 0) * dt; // leggera gravità (fuochi d'artificio)
     e.x += e.vx * dt;
     e.y += e.vy * dt;
     e.life -= dt;
@@ -849,25 +963,534 @@ function drawEffects() {
 }
 
 /*
- * fitFont(text, maxSize): sceglie una dimensione del font pixel che faccia
- * stare il testo nella larghezza del canvas (i livelli hanno larghezze diverse).
+ * fitFont(text, maxSize, maxWidth): sceglie una dimensione del font pixel che
+ * faccia stare il testo nella larghezza data (di base il 90% del canvas, che
+ * cambia da livello a livello). Nel font pixel ogni lettera è larga quanto
+ * la dimensione del font.
  */
-function fitFont(text, maxSize) {
-  const size = Math.min(maxSize, Math.floor((canvas.width * 0.9) / text.length));
+function fitFont(text, maxSize, maxWidth = canvas.width * 0.9) {
+  const size = Math.max(6, Math.min(maxSize, Math.floor(maxWidth / text.length)));
   return `${size}px "Press Start 2P", monospace`;
 }
 
 /*
+ * arcadeText(text, x, y, maxSize, color, opts): scrive un testo centrato nel
+ * font pixel, con l'ombra squadrata tipica dei cabinati.
+ * opts: maxWidth (larghezza massima), glow (alone luminoso), shadow (colore ombra).
+ */
+function arcadeText(text, x, y, maxSize, color, opts = {}) {
+  ctx.font = fitFont(text, maxSize, opts.maxWidth);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  if (opts.shadow !== null) {
+    ctx.fillStyle = opts.shadow ?? "#000000";
+    ctx.fillText(text, x + 2, y + 2);
+  }
+  if (opts.glow) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 14;
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
+}
+
+/*
+ * blink(ms): true e false alternati ogni "ms" millisecondi, per le scritte
+ * lampeggianti.
+ */
+function blink(ms = 500) {
+  return Math.floor(now / ms) % 2 === 0;
+}
+
+/*
+ * drawPanel(x, y, w, h, color): riquadro nero con doppio bordo al neon,
+ * usato da tutte le schermate.
+ */
+function drawPanel(x, y, w, h, color) {
+  ctx.fillStyle = "rgba(0, 0, 0, 0.88)";
+  ctx.fillRect(x, y, w, h);
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 6, y + 6, w - 12, h - 12);
+}
+
+/*
+ * veil(alpha): velo scuro sopra il gioco, sotto le schermate.
+ */
+function veil(alpha) {
+  ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+/*
+ * Cuore in pixel art per mostrare le vite nelle schermate.
+ */
+const HEART = [".RR.RR.", "RRRRRRR", "RRRRRRR", ".RRRRR.", "..RRR..", "...R..."];
+
+function drawHearts(cx, y, count) {
+  const w = 7 * U + 6;
+  const start = cx - (count * w) / 2;
+  for (let i = 0; i < count; i++) {
+    drawBitmap(HEART, start + i * w, y, { R: "#ef4444" }, false);
+  }
+}
+
+/*
+ * sepiaPalette(palette): trasforma una tavolozza in toni seppia, come
+ * una foto di giornale (usata nella schermata di game over).
+ */
+function sepiaPalette(palette) {
+  const out = {};
+  for (const key in palette) {
+    const hex = palette[key];
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const l = Math.round(0.3 * r + 0.59 * g + 0.11 * b);
+    out[key] = `rgb(${Math.min(255, l + 30)}, ${Math.min(255, l + 15)}, ${l})`;
+  }
+  return out;
+}
+
+/*
+ * drawBars(x, y, w, h): sbarre di una prigione al neon verde.
+ */
+function drawBars(x, y, w, h) {
+  ctx.save();
+  ctx.shadowColor = "#22c55e";
+  ctx.shadowBlur = 8;
+  ctx.strokeStyle = "#4ade80";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, w, h);
+  ctx.beginPath();
+  for (let bx = x + 12; bx < x + w - 4; bx += 14) {
+    ctx.moveTo(bx, y);
+    ctx.lineTo(bx, y + h);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/*
+ * ===================== SCHERMATA INIZIALE =====================
+ * Una via di città di notte: cielo stellato, luna, palazzi con finestre
+ * accese, lampioni e, sulla strada, Maigret che insegue un ladro col sacco.
+ */
+const BUILDINGS = [
+  { w: 70, h: 0.20 }, { w: 48, h: 0.27 }, { w: 90, h: 0.16 }, { w: 60, h: 0.25 },
+  { w: 76, h: 0.19 }, { w: 54, h: 0.28 }, { w: 84, h: 0.17 }, { w: 64, h: 0.23 },
+  { w: 70, h: 0.26 }, { w: 58, h: 0.18 }
+];
+
+function drawTitleScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const groundY = Math.round(H * 0.8);
+
+  // Cielo
+  const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+  sky.addColorStop(0, "#02030f");
+  sky.addColorStop(1, "#1e1b4b");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, groundY);
+
+  // Stelle che brillano (posizioni fisse, calcolate dall'indice)
+  const rand = n => { const r = Math.sin(n * 12.9898) * 43758.5453; return r - Math.floor(r); };
+  for (let i = 0; i < 70; i++) {
+    const sx = Math.floor(rand(i + 1) * W);
+    const sy = Math.floor(rand(i + 101) * H * 0.55);
+    const a = 0.35 + 0.65 * Math.abs(Math.sin(now / 400 + i * 1.7));
+    ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+
+  // Luna
+  ctx.save();
+  ctx.shadowColor = "#fef3c7";
+  ctx.shadowBlur = 25;
+  ctx.fillStyle = "#fef3c7";
+  ctx.beginPath();
+  ctx.arc(W - 70, 70, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "#fde68a";
+  ctx.fillRect(W - 80, 60, 8, 8);
+  ctx.fillRect(W - 62, 78, 6, 6);
+
+  // Palazzi con finestre (alcune accese, una che si accende e spegne)
+  let bx = 0;
+  let b = 0;
+  while (bx < W) {
+    const bld = BUILDINGS[b % BUILDINGS.length];
+    const bh = Math.round(H * bld.h);
+    const top = groundY - bh;
+    ctx.fillStyle = "#0b1026";
+    ctx.fillRect(bx, top, bld.w - 4, bh);
+    ctx.fillStyle = "#312e81";
+    ctx.fillRect(bx, top, bld.w - 4, 3);
+
+    for (let wy = top + 12; wy < groundY - 14; wy += 18) {
+      for (let wx = bx + 8; wx < bx + bld.w - 14; wx += 14) {
+        const seed = (wx * 7 + wy * 13 + b * 31) % 11;
+        let lit = seed < 3;
+        if (seed === 5) lit = Math.floor(now / 900 + b) % 3 === 0;
+        ctx.fillStyle = lit ? "#fde68a" : "#1f2440";
+        ctx.fillRect(wx, wy, 6, 9);
+      }
+    }
+    bx += bld.w;
+    b++;
+  }
+
+  // Strada, marciapiede e lampioni
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, groundY, W, H - groundY);
+  ctx.fillStyle = "#374151";
+  ctx.fillRect(0, groundY, W, 4);
+  ctx.fillStyle = "#facc15";
+  for (let lx = ((-now * 0.05) % 60) - 60; lx < W; lx += 60) {
+    ctx.fillRect(Math.round(lx), H - 14, 30, 3);
+  }
+  for (let lx = 40; lx < W; lx += 200) {
+    const glow = ctx.createRadialGradient(lx, groundY - 70, 2, lx, groundY - 40, 70);
+    glow.addColorStop(0, "rgba(253, 224, 71, 0.45)");
+    glow.addColorStop(1, "rgba(253, 224, 71, 0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(lx - 70, groundY - 110, 140, 120);
+    ctx.fillStyle = "#4b5563";
+    ctx.fillRect(lx - 2, groundY - 70, 4, 70);
+    ctx.fillStyle = "#fef08a";
+    ctx.fillRect(lx - 7, groundY - 76, 14, 6);
+  }
+
+  // Inseguimento: il ladro scappa, Maigret lo segue a qualche passo
+  const scale = 2;
+  const feetY = Math.round(groundY + (H - groundY) * 0.55);
+  const loopW = W + 260;
+  const thiefX = ((now * 0.12) % loopW) - 60;
+  const maigretX = thiefX - 110;
+  drawSpriteScaled(maigretX, feetY, scale, {
+    sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, dir: "right", walking: true, walkTime: now
+  });
+  drawSpriteScaled(thiefX, feetY, scale, {
+    sprite: SPRITES.criminal, palette: criminalPalette(PERSONALITY_COLORS.temerario),
+    dir: "right", walking: true, walkTime: now * 1.2, sack: true
+  });
+  if (Math.floor(now / 350) % 3 === 0) {
+    arcadeText("!", thiefX + 4, feetY - SPRITE_ROWS * U * scale - 14, 16, "#fde047");
+  }
+
+  // Titolo e scritte
+  arcadeText("GUARDIE", W / 2, H * 0.13, 44, "#fde047", { glow: true, shadow: "#9d174d" });
+  arcadeText("E LADRI", W / 2, H * 0.24, 44, "#f0abfc", { glow: true, shadow: "#701a75" });
+  arcadeText("UN CASO DEL COMMISSARIO MAIGRET", W / 2, H * 0.33, 11, "#93c5fd");
+  if (blink(500)) arcadeText("INSERT COIN", W / 2, H * 0.43, 20, "#ffffff", { glow: true });
+  arcadeText("PREMI INVIO PER GIOCARE", W / 2, H * 0.5, 10, "#fde047");
+
+  // Legenda dei colori dei ladri
+  const names = Object.keys(PERSONALITY_COLORS);
+  const step = W / names.length;
+  ctx.font = fitFont("IMPREVEDIBILE", 7, step - 18);
+  ctx.textBaseline = "middle";
+  names.forEach((name, i) => {
+    const x = i * step + 10;
+    ctx.fillStyle = PERSONALITY_COLORS[name];
+    ctx.fillRect(x, H - 30, 8, 8);
+    ctx.textAlign = "left";
+    ctx.fillText(name.toUpperCase(), x + 12, H - 26);
+  });
+}
+
+/*
+ * ===================== PAUSA =====================
+ * Il gioco resta visibile sotto un velo scuro; Maigret si fuma la pipa.
+ */
+function drawPauseScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  veil(0.65);
+
+  const pw = Math.min(W - 40, 440);
+  const ph = 220;
+  const px = (W - pw) / 2;
+  const py = (H - ph) / 2;
+  drawPanel(px, py, pw, ph, "#22d3ee");
+
+  arcadeText("PAUSA", W / 2, py + 40, 26, "#fde047", { glow: true });
+  drawSpriteScaled(px + 60, py + 160, 2, { sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, dir: "down", pipe: true });
+
+  const tx = px + 120 + (pw - 120) / 2;
+  const tw = pw - 140;
+  arcadeText("IL COMMISSARIO", tx, py + 95, 11, "#ffffff", { maxWidth: tw });
+  arcadeText("SI CONCEDE", tx, py + 115, 11, "#ffffff", { maxWidth: tw });
+  arcadeText("UNA PIPATA...", tx, py + 135, 11, "#ffffff", { maxWidth: tw });
+  if (blink(600)) arcadeText("ESC PER RIPRENDERE", W / 2, py + ph - 26, 10, "#22d3ee", { maxWidth: pw - 30 });
+}
+
+/*
+ * ===================== LIVELLO COMPLETATO =====================
+ * "CASO RISOLTO!": tutti i ladri del livello dietro le sbarre e Maigret
+ * accanto alla cella che fuma soddisfatto.
+ */
+function drawLevelCompleteScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  veil(0.7);
+
+  // Cella con tutti i ladri del livello: su due file se sono tanti
+  const n = game.criminals.length;
+  const pw = Math.min(W - 30, 560);
+  const perRow = n > 5 ? Math.ceil(n / 2) : n;
+  const rowsCount = Math.ceil(n / perRow);
+  const scale = Math.min(1.5, (pw - 150) / (perRow * 34));
+  const slot = 34 * scale;
+  const rowH = SPRITE_ROWS * U * scale + 10;
+  const jailW = perRow * slot + 20;
+  const jailH = rowsCount * rowH + 14;
+  const ph = 75 + jailH + 105;
+  const px = (W - pw) / 2;
+  const py = (H - ph) / 2;
+  const jailX = px + (pw - 90 - jailW) / 2;
+  const jailY = py + 75;
+  drawPanel(px, py, pw, ph, "#4ade80");
+
+  arcadeText("CASO RISOLTO!", W / 2, py + 40, 26, "#fde047", { glow: true, shadow: "#14532d", maxWidth: pw - 30 });
+
+  ctx.fillStyle = "rgba(34, 197, 94, 0.1)";
+  ctx.fillRect(jailX, jailY, jailW, jailH);
+  game.criminals.forEach((c, i) => {
+    const row = Math.floor(i / perRow);
+    const col = i % perRow;
+    drawSpriteScaled(jailX + 10 + slot * (col + 0.5), jailY + 6 + rowH * (row + 1) - 4, scale, {
+      sprite: SPRITES.criminal, palette: criminalPalette(c.color), dir: "down"
+    });
+  });
+  drawBars(jailX, jailY, jailW, jailH);
+
+  // Maigret accanto alla cella
+  drawSpriteScaled(jailX + jailW + 45, jailY + jailH - 6, Math.max(scale, 1.5), {
+    sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, dir: "left", pipe: true
+  });
+
+  arcadeText(`ARRESTI: ${game.caught}   PUNTEGGIO: ${game.score}`, W / 2, jailY + jailH + 35, 11, "#ffffff", { maxWidth: pw - 40 });
+  if (blink()) arcadeText("INVIO: PROSSIMO CASO", W / 2, jailY + jailH + 72, 12, "#4ade80", { maxWidth: pw - 40 });
+}
+
+/*
+ * ===================== LIVELLO PERSO =====================
+ * "IL LADRO E' SCAPPATO!" (il font pixel non ha la È maiuscola): volantino "RICERCATO" con la faccia del fuggitivo,
+ * il ladro che corre via col sacco e Maigret che resta a guardare.
+ */
+function drawLevelLostScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  veil(0.7);
+
+  const pw = Math.min(W - 30, 560);
+  const ph = 320;
+  const px = (W - pw) / 2;
+  const py = (H - ph) / 2;
+  drawPanel(px, py, pw, ph, "#f87171");
+
+  arcadeText("IL LADRO E' SCAPPATO!", W / 2, py + 40, 22, "#f87171", { glow: true, shadow: "#450a0a", maxWidth: pw - 30 });
+
+  const thiefPalette = criminalPalette(escapedCriminal?.color ?? PERSONALITY_COLORS.furbo);
+
+  // Volantino "RICERCATO" un po' storto
+  const postX = px + 28;
+  const postY = py + 75;
+  ctx.save();
+  ctx.translate(postX + 55, postY + 70);
+  ctx.rotate(-0.05);
+  ctx.fillStyle = "#fde68a";
+  ctx.fillRect(-55, -70, 110, 140);
+  ctx.fillStyle = "#78350f";
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("RICERCATO", 0, -56);
+  ctx.fillStyle = "#d6b97a";
+  ctx.fillRect(-40, -44, 80, 74);
+  ctx.beginPath();
+  ctx.rect(-40, -44, 80, 74);
+  ctx.clip();
+  drawSpriteScaled(0, 80, 3.2, { sprite: SPRITES.criminal, palette: thiefPalette, dir: "down" });
+  ctx.restore();
+  ctx.fillStyle = "#78350f";
+  ctx.font = '7px "Press Start 2P", monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("TAGLIA: 100", postX + 55, postY + 125);
+
+  // Scena: Maigret fermo, il ladro corre via
+  const sceneX = px + 160;
+  const sceneW = pw - 180;
+  const groundY = py + 205;
+  ctx.fillStyle = "#374151";
+  ctx.fillRect(sceneX, groundY, sceneW, 3);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(sceneX, py + 70, sceneW, groundY - py - 60);
+  ctx.clip();
+  drawSpriteScaled(sceneX + 30, groundY, 2, { sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, dir: "right" });
+  const runX = sceneX + 90 + ((now * 0.1) % (sceneW - 30));
+  drawSpriteScaled(runX, groundY, 2, {
+    sprite: SPRITES.criminal, palette: thiefPalette, dir: "right", walking: true, walkTime: now * 1.2, sack: true
+  });
+  ctx.restore();
+  if (blink(300)) arcadeText("?!", sceneX + 30, groundY - SPRITE_ROWS * U * 2 - 14, 12, "#fde047");
+
+  arcadeText("VITE RIMASTE", W / 2, py + 235, 9, "#ffffff");
+  drawHearts(W / 2, py + 248, game.lives);
+  if (blink()) arcadeText("INVIO: RIPROVA", W / 2, py + ph - 26, 12, "#f87171", { maxWidth: pw - 40 });
+}
+
+/*
+ * ===================== GAME OVER =====================
+ * Prima pagina di giornale ingiallita: i ladri l'hanno fatta franca,
+ * con la foto seppia del fuggitivo e il timbro "CASO ARCHIVIATO".
+ */
+function drawGameOverScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  veil(0.82);
+
+  if (blink(700)) {
+    arcadeText("GAME OVER", W / 2, H * 0.1, 34, "#ef4444", { glow: true, shadow: "#450a0a" });
+  }
+
+  // Giornale
+  const nw = Math.min(W - 50, 460);
+  const nh = Math.min(H * 0.6, 330);
+  const nx = (W - nw) / 2;
+  const ny = H * 0.18;
+  ctx.fillStyle = "#f1e6c8";
+  ctx.fillRect(nx, ny, nw, nh);
+  ctx.strokeStyle = "#a8a29e";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(nx + 6, ny + 6, nw - 12, nh - 12);
+
+  arcadeText("LA GAZZETTA", nx + nw / 2, ny + 32, 20, "#1c1917", { shadow: null, maxWidth: nw - 30 });
+  ctx.fillStyle = "#1c1917";
+  ctx.fillRect(nx + 14, ny + 50, nw - 28, 3);
+  ctx.fillRect(nx + 14, ny + 56, nw - 28, 1);
+  arcadeText("EDIZIONE STRAORDINARIA", nx + nw / 2, ny + 68, 7, "#57534e", { shadow: null });
+  arcadeText("I LADRI LA", nx + nw / 2, ny + 95, 16, "#1c1917", { shadow: null, maxWidth: nw - 30 });
+  arcadeText("FANNO FRANCA!", nx + nw / 2, ny + 120, 16, "#1c1917", { shadow: null, maxWidth: nw - 30 });
+
+  // Foto seppia del fuggitivo
+  const photoX = nx + 20;
+  const photoY = ny + 140;
+  const photoW = 120;
+  const photoH = Math.max(60, nh - 160);
+  ctx.fillStyle = "#cbbd99";
+  ctx.fillRect(photoX, photoY, photoW, photoH);
+  ctx.strokeStyle = "#57534e";
+  ctx.strokeRect(photoX, photoY, photoW, photoH);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(photoX, photoY, photoW, photoH);
+  ctx.clip();
+  drawSpriteScaled(photoX + photoW / 2, photoY + photoH - 6, 2, {
+    sprite: SPRITES.criminal,
+    palette: sepiaPalette(criminalPalette(escapedCriminal?.color ?? PERSONALITY_COLORS.furbo)),
+    dir: "right", walking: true, walkTime: 110, sack: true
+  });
+  ctx.restore();
+
+  // Colonne di testo finte
+  ctx.fillStyle = "#a8a29e";
+  for (let ly = photoY + 4, i = 0; ly < photoY + photoH - 4; ly += 10, i++) {
+    const lw = (nw - photoW - 60) * (0.6 + ((i * 37) % 40) / 100);
+    ctx.fillRect(photoX + photoW + 16, ly, lw, 4);
+  }
+
+  // Timbro rosso
+  ctx.save();
+  ctx.translate(nx + nw * 0.66, photoY + photoH / 2);
+  ctx.rotate(-0.22);
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = "#dc2626";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(-92, -20, 184, 40);
+  ctx.strokeRect(-87, -15, 174, 30);
+  ctx.fillStyle = "#dc2626";
+  ctx.font = '11px "Press Start 2P", monospace';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("CASO ARCHIVIATO", 0, 1);
+  ctx.restore();
+
+  arcadeText(`PUNTEGGIO FINALE: ${game.score}`, W / 2, ny + nh + 28, 12, "#fde047");
+  if (blink()) arcadeText("INVIO: TORNA AL MENU", W / 2, ny + nh + 56, 11, "#ffffff");
+}
+
+/*
+ * ===================== GIOCO COMPLETATO =====================
+ * Fuochi d'artificio e Maigret che saluta alzando il cappello.
+ */
+const FIREWORK_COLORS = ["#facc15", "#fb923c", "#e879f9", "#f87171", "#22d3ee", "#4ade80"];
+
+function spawnFirework() {
+  const x = canvas.width * (0.1 + Math.random() * 0.8);
+  const y = canvas.height * (0.08 + Math.random() * 0.35);
+  const color = FIREWORK_COLORS[Math.floor(Math.random() * FIREWORK_COLORS.length)];
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2;
+    const s = 0.08 + Math.random() * 0.1;
+    effects.push({
+      type: "spark", x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, g: 0.00012,
+      life: 1100, max: 1100, color
+    });
+  }
+}
+
+function drawWinScreen() {
+  const W = canvas.width;
+  const H = canvas.height;
+  veil(0.8);
+  drawEffects();
+
+  arcadeText("TUTTI DIETRO", W / 2, H * 0.18, 30, "#fde047", { glow: true, shadow: "#9d174d" });
+  arcadeText("LE SBARRE!", W / 2, H * 0.27, 30, "#fde047", { glow: true, shadow: "#9d174d" });
+  arcadeText("CONGRATULAZIONI, COMMISSARIO!", W / 2, H * 0.36, 11, "#93c5fd");
+
+  drawSpriteScaled(W / 2, H * 0.66, 3, { sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, dir: "down", hatUp: true });
+
+  arcadeText(`PUNTEGGIO FINALE: ${game.score}`, W / 2, H * 0.77, 14, "#ffffff");
+  if (blink()) arcadeText("INVIO: TORNA AL MENU", W / 2, H * 0.86, 11, "#4ade80");
+}
+
+/*
+ * isGameWon(): true quando l'ultimo livello è stato completato.
+ */
+function isGameWon() {
+  return game.gameOver && !levelComplete && !levelLost && !gameLost &&
+    game.caught === game.criminals.length;
+}
+
+/*
  * draw(): ridisegna l'intera scena da zero.
- * 1. Copia lo sfondo del livello (muri, pavimento, celle) già pronto.
- * 2. Disegna le uscite lampeggianti.
- * 3. Disegna i criminali non ancora arrestati e poi Maigret, ordinati dall'alto
- *    in basso così chi sta più in basso copre chi sta dietro.
- * 4. Disegna gli effetti delle catture.
- * 5. Se la partita è finita, sovrappone la schermata di fine livello / game over.
+ * - Sulla schermata iniziale disegna solo il menu.
+ * - In gioco: sfondo del livello, uscite lampeggianti, personaggi (ordinati
+ *   dall'alto in basso così chi sta più in basso copre chi sta dietro),
+ *   effetti delle catture e, sopra, la schermata di pausa o di fine.
  */
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (screen === "title") {
+    drawTitleScreen();
+    return;
+  }
+
   if (background) ctx.drawImage(background, 0, 0);
 
   for (const e of game.exits) drawExit(e);
@@ -882,57 +1505,17 @@ function draw() {
 
   drawEffects();
 
-  // Schermata di fine partita o completamento livello
   if (game.gameOver) {
-    ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    let message = "PARTITA TERMINATA";
-    let subtitle = "PREMI R PER RICOMINCIARE";
-    let color = "#fde047";
-
-    if (gameLost) {
-      message = "GAME OVER";
-      subtitle = "PREMI INVIO PER RICOMINCIARE";
-      color = "#f87171";
-    } else if (levelLost) {
-      message = "UN CRIMINALE È FUGGITO!";
-      subtitle = "PREMI INVIO PER RIPROVARE";
-      color = "#f87171";
-    } else if (levelComplete) {
-      message = "LIVELLO COMPLETATO!";
-      subtitle = "PREMI INVIO PER CONTINUARE";
-    } else if (
-      currentLevelIndex === levels.length - 1 &&
-      game.caught === game.criminals.length
-    ) {
-      message = "GIOCO COMPLETATO!";
-      subtitle = "HAI CATTURATO TUTTI I CRIMINALI!";
-    }
-
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    // Titolo con ombra squadrata e alone, come nei cabinati
-    ctx.font = fitFont(message, 24);
-    ctx.fillStyle = "#701a75";
-    ctx.fillText(message, canvas.width / 2 + 3, canvas.height / 2 - 18 + 3);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 14;
-    ctx.fillStyle = color;
-    ctx.fillText(message, canvas.width / 2, canvas.height / 2 - 18);
-    ctx.shadowBlur = 0;
-
-    // Sottotitolo lampeggiante
-    if (Math.floor(now / 500) % 2 === 0) {
-      ctx.font = fitFont(subtitle, 12);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 26);
-    }
-
-    ctx.textAlign = "start";
-    ctx.textBaseline = "alphabetic";
+    if (gameLost) drawGameOverScreen();
+    else if (levelLost) drawLevelLostScreen();
+    else if (levelComplete) drawLevelCompleteScreen();
+    else if (isGameWon()) drawWinScreen();
+  } else if (paused) {
+    drawPauseScreen();
   }
+
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
 }
 
 
@@ -940,19 +1523,23 @@ function draw() {
 /*
  * loop(time): il ciclo di gioco, chiamato dal browser circa 60 volte al secondo
  * tramite requestAnimationFrame; "time" è il tempo trascorso in millisecondi.
- * - Giocatore: al massimo un passo ogni playerDelay ms. Legge i tasti premuti e
- *   sceglie UNA sola direzione (priorità: su, giù, sinistra, destra — niente
- *   diagonali); se c'è una direzione, muove Maigret e memorizza l'istante del passo.
- * - Criminali: si muovono tutti insieme ogni criminalDelay ms.
- * - Grafica: fa scorrere le posizioni disegnate verso quelle vere, aggiorna
- *   gli effetti, ridisegna la scena e si ri-prenota per il fotogramma successivo.
+ * - Solo durante una partita non in pausa:
+ *   - Giocatore: al massimo un passo ogni playerDelay ms. Legge i tasti premuti e
+ *     sceglie UNA sola direzione (priorità: su, giù, sinistra, destra — niente
+ *     diagonali); se c'è una direzione, muove Maigret e memorizza l'istante del passo.
+ *   - Criminali: si muovono tutti insieme ogni criminalDelay ms.
+ *   - Grafica: fa scorrere le posizioni disegnate verso quelle vere.
+ * - Aggiorna gli effetti (fermi in pausa), lancia i fuochi d'artificio a
+ *   gioco completato, ridisegna e si ri-prenota per il fotogramma successivo.
  */
 function loop(time) {
   const dt = lastFrame ? Math.min(time - lastFrame, 100) : 16;
   lastFrame = time;
   now = time;
 
-  if (!game.gameOver && time - lastPlayerMove > playerDelay) {
+  const active = screen === "playing" && !paused;
+
+  if (active && !game.gameOver && time - lastPlayerMove > playerDelay) {
     let dx = 0, dy = 0;
     if (keys.arrowup || keys.w) dy = -1;
     else if (keys.arrowdown || keys.s) dy = 1;
@@ -967,21 +1554,24 @@ function loop(time) {
     }
   }
 
-  if (!game.gameOver && time - lastEnemyMove > criminalDelay) {
+  if (active && !game.gameOver && time - lastEnemyMove > criminalDelay) {
     moveCriminals(game);
     lastEnemyMove = time;
   }
 
-  updateVisual(game.player, playerDelay, dt);
-  for (const c of game.criminals) updateVisual(c, criminalDelay, dt);
-  updateEffects(dt);
+  if (active) {
+    updateVisual(game.player, playerDelay, dt);
+    for (const c of game.criminals) updateVisual(c, criminalDelay, dt);
+  }
+  if (!paused) updateEffects(dt);
+  if (screen === "playing" && isGameWon() && Math.random() < dt / 350) spawnFirework();
 
   draw();
   requestAnimationFrame(loop);
 }
 
 /*
- * Avvio: prepara la prima partita e fa partire il ciclo di gioco.
+ * Avvio: mostra la schermata iniziale e fa partire il ciclo di gioco.
  */
-restart();
+showTitle();
 requestAnimationFrame(loop);

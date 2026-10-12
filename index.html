@@ -1,8 +1,8 @@
 <!--
-  index.html — Pagina principale del gioco "Maigret: Caccia alla Fuga".
+  index.html — Pagina principale del gioco "Guardie e Ladri".
   Questo file contiene solo la "cornice" del gioco in stile cabinato arcade:
   titolo al neon, barra dei punteggi (HUD), l'area di disegno (canvas) con
-  effetto schermo CRT, il pulsante per ricominciare e le istruzioni.
+  effetto schermo CRT, il pulsante "INSERT COIN" per iniziare e le istruzioni.
   Tutta la logica di gioco (movimento, criminali, cella, punteggio, animazioni)
   sta in main.js, che viene caricato in fondo alla pagina.
 -->
@@ -17,7 +17,7 @@
   <!-- Rende la pagina adatta ai dispositivi mobili: larghezza = schermo, zoom iniziale 100% -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Testo mostrato nella scheda del browser -->
-  <title>Maigret: Caccia alla Fuga</title>
+  <title>Guardie e Ladri</title>
   <!-- Font "pixel" in stile sala giochi anni '80, caricato da Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -113,12 +113,18 @@
     }
     button:hover { background: #e879f9; }
     button:active { transform: translateY(4px); box-shadow: 0 0 0 #86198f, 0 0 14px rgba(217, 70, 239, 0.6); }
+    /* Il pulsante "INSERT COIN" lampeggia come la scritta dei cabinati che invita a mettere la moneta */
+    #restart { animation: coin 1.2s steps(1) infinite; }
+    @keyframes coin {
+      0%, 100% { box-shadow: 0 4px 0 #86198f, 0 0 18px rgba(217, 70, 239, 0.9); }
+      50% { box-shadow: 0 4px 0 #86198f, 0 0 4px rgba(217, 70, 239, 0.3); }
+    }
   </style>
 </head>
 <!-- <body>: tutto ciò che è visibile nella pagina -->
 <body>
   <!-- Titolo del gioco -->
-  <h1>MAIGRET<br>CACCIA ALLA FUGA</h1>
+  <h1>GUARDIE E LADRI</h1>
   <!-- Barra dei punteggi: main.js aggiorna "level-info" e "lives" tramite il loro id -->
   <div class="hud">
     <div><span class="label">LIVELLO</span><p id="level-info">Livello 1</p></div>
@@ -130,10 +136,10 @@
   <div class="screen"><canvas id="game" width="760" height="520"></canvas></div>
   <!-- Riga di stato: main.js la aggiorna (tramite id="status") con arresti e punteggio -->
   <p id="status">Criminali in libertà: 4</p>
-  <!-- Pulsante per ricominciare da capo; main.js lo trova tramite id="restart" e gli collega l'azione -->
-  <div><button id="restart">NUOVA PARTITA</button></div>
+  <!-- Pulsante per iniziare una nuova partita; main.js lo trova tramite id="restart" e gli collega l'azione -->
+  <div><button id="restart">INSERT COIN</button></div>
   <!-- Istruzioni per il giocatore -->
-  <p class="help">FRECCE O WASD PER MUOVERTI<br>RAGGIUNGI I CRIMINALI PRIMA CHE FUGGANO DALLE USCITE!</p>
+  <p class="help">FRECCE O WASD PER MUOVERTI - ESC PER LA PAUSA<br>RAGGIUNGI I CRIMINALI PRIMA CHE FUGGANO DALLE USCITE!</p>
   <!-- Carica la logica del gioco come modulo JavaScript (eseguito dopo la lettura della pagina) -->
   <script type="module" src="main.js"></script>
 </body>
