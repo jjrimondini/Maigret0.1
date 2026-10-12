@@ -23,26 +23,18 @@ import { levels } from "./levels.js";
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const statusText = document.getElementById("status");
-
-/*
- * Dimensioni della griglia: ogni casella è 40x40 pixel,
- * la mappa ha 19 colonne e 13 righe (19*40 = 760, 13*40 = 520,
- * cioè esattamente la dimensione del canvas).
- */
 const TILE = 40;
-const COLS = 19;
-const ROWS = 13;
+
 
 /*
 *importazioni variabili di livello da level.js
 */
 
 let currentLevelIndex = 0;
-let map = levels[0].map;
-let cellPositions = findCells(map);
-
-let playerDelay = levels[0].playerDelay;
-let criminalDelay = levels[0].criminalDelay;
+let map = [];
+let cellPositions = [];
+let playerDelay = 0;
+let criminalDelay = 0;
 
 let levelComplete = false;
 
@@ -74,6 +66,18 @@ function findCells(currentMap) {
     return cells;
 }
 
+/*
+ * findPlayerStart(currentMap): restituisce la posizione della "P",
+ * cioè la casella di partenza di Maigret.
+ */
+function findPlayerStart(currentMap) {
+    for (let y = 0; y < currentMap.length; y++) {
+        const x = currentMap[y].indexOf("P");
+        if (x !== -1) return { x, y };
+    }
+    return null;
+}
+
 
 
 /*
@@ -85,7 +89,7 @@ function findCells(currentMap) {
  * una cattura quando è un criminale a finire addosso a Maigret).
  */
 const game = {
-  COLS, ROWS, map, TILE, canvas, ctx, statusText,
+  COLS:0, ROWS:0, map, TILE, canvas, ctx, statusText,
   player: null, criminals: [], score: 0, caught: 0, gameOver: false,
   checkCapture
 };
@@ -118,11 +122,24 @@ function loadLevel(index) {
 
     // Aggiorna anche la mappa usata dai moduli dei bot.
     game.map = map;
+    game.ROWS = map.length;
+    game.COLS = map[0].length;
+    // Tutte le righe devono avere la stessa lunghezza, altrimenti la mappa è "storta".
+    if (map.some(row => row.length !== game.COLS)) {
+    throw new Error(`Nel livello ${level.name} le righe della mappa non sono tutte lunghe uguali`);
+    }
 
+    // Il canvas si adatta alla mappa del livello.
+    canvas.width = game.COLS * TILE;
+    canvas.height = game.ROWS * TILE;
     playerDelay = level.playerDelay;
     criminalDelay = level.criminalDelay;
 
-    game.player = { x: 9, y: 6 };
+    const start = findPlayerStart(map);
+    if (!start) {
+    throw new Error(`Nel livello ${level.name} manca la "P" di Maigret`);
+    }
+    game.player = start;
 
     game.criminals = level.bots.map((bot) => {
         const cell = cellPositions[bot.cell];
@@ -140,18 +157,21 @@ function loadLevel(index) {
             target: null,
             color: PERSONALITY_COLORS[bot.type] ?? "#9ca3af",
             personality: bot.type,
-            arrested: false
+            arrested: bot.arrested === true
         };
     });
 
-    game.caught = 0;
+    game.caught = game.criminals.filter(c => c.arrested).length;
+    if (game.caught === game.criminals.length) {
+    throw new Error(`Nel livello ${level.name} tutti i criminali sono già arrestati`);
+    }
     game.gameOver = false;
     levelComplete = false;
 
     document.getElementById("level-info").textContent = level.name;
 
     statusText.textContent =
-        `Criminali in libertà: ${game.criminals.length} | Punteggio: ${game.score}`;
+        `Criminali in libertà: ${game.criminals.length - game.caught} | Punteggio: ${game.score}`;
 
     lastPlayerMove = 0;
     lastEnemyMove = 0;
@@ -289,8 +309,8 @@ function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   // Disegna la mappa del livello attivo
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
+  for (let y = 0; y < game.ROWS; y++) {
+    for (let x = 0; x < game.COLS; x++) {
       const px = x * TILE;
       const py = y * TILE;
 

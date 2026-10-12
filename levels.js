@@ -3,6 +3,7 @@
  * - "#" = muro
  * - "." = corridoio percorribile
  * - "C" = cella della prigione (una per angolo), dove partono i criminali
+ * - "P" = posizione iniziale del giocatore (Maigret)
  * Si accede a una casella con map[y][x] (prima la riga, poi la colonna).
  */
 
@@ -17,7 +18,7 @@ export const levels = [
             "###...##...##...###",
             "#.....#...#.......#",
             "#.###.#.#.#.#####.#",
-            "#...#...#...#.....#",
+            "#...#...#P..#.....#",
             "#.#.#####.###.###.#",
             "#.#.....#...#.....#",
             "#.#####...#...###.#",
@@ -30,8 +31,8 @@ export const levels = [
         criminalDelay: 300,
 
         bots: [
-            { type: "fifone", cell: 0 },
-            { type: "fifone", cell: 1 }
+            { type: "fifone", cell: 0, arrested: false },
+            { type: "fifone", cell: 1, arrested: false }
         ]
     },
 
@@ -45,7 +46,7 @@ export const levels = [
             "###...##...##...###",
             "#.....#...#.......#",
             "#.###.#.#.#.#####.#",
-            "#...#...#...#.....#",
+            "#...#...#P..#.....#",
             "#.#.#####.###.###.#",
             "#.#.....#...#.....#",
             "#.#####...#...###.#",
@@ -58,9 +59,9 @@ export const levels = [
         criminalDelay: 270,
 
         bots: [
-            { type: "fifone", cell: 0 },
-            { type: "furbo", cell: 1 },
-            { type: "temerario", cell: 2 }
+            { type: "fifone", cell: 0, arrested: false },
+            { type: "furbo", cell: 1, arrested: false },
+            { type: "temerario", cell: 2, arrested: false }
         ]
     },
 
@@ -74,7 +75,7 @@ export const levels = [
             "###...##...##...###",
             "#.....#...#.......#",
             "#.###.#.#.#.#####.#",
-            "#...#...#...#.....#",
+            "#...#...#P..#.....#",
             "#.#.#####.###.###.#",
             "#.#.....#...#.....#",
             "#.#####...#...###.#",
@@ -87,10 +88,10 @@ export const levels = [
         criminalDelay: 240,
 
         bots: [
-            { type: "fifone", cell: 0 },
-            { type: "furbo", cell: 1 },
-            { type: "imprevedibile", cell: 2 },
-            { type: "temerario", cell: 3 }
+            { type: "fifone", cell: 0, arrested: true },
+            { type: "furbo", cell: 1, arrested: false },
+            { type: "imprevedibile", cell: 2, arrested: false },
+            { type: "temerario", cell: 3, arrested: false }
         ]
     }
 ];
