@@ -47,6 +47,55 @@ function canMoveTo(game, criminal, p) {
 }
 
 /*
+ * Raggio di fuga di ogni personalità: da quanti passi di distanza
+ * il criminale "punta" all'uscita. Più è alto, più fuggire è una priorità.
+ */
+const ESCAPE_RANGE = {
+  fifone: Infinity,
+  furbo: 10,
+  imprevedibile: 6,
+  temerario: 3
+};
+
+/*
+ * getEscapePath(game, criminal)
+ * Restituisce il percorso sicuro verso l'uscita più vicina, ma solo se
+ * è entro il raggio di fuga del criminale;
+ * Il raggio scritto nel livello (escapeRange) ha la precedenza su quello
+ * della personalità.
+ */
+function getEscapePath(game, criminal) {
+  const range = criminal.escapeRange ?? ESCAPE_RANGE[criminal.personality] ?? 0;
+
+  let best = [];
+  for (const exit of game.exits) {
+    const path = findSafePath(game, criminal, exit, criminal);
+    if (path.length && (!best.length || path.length < best.length)) {
+      best = path;
+    }
+  }
+
+  return best.length <= range ? best : [];
+}
+
+/*
+ * tryEscape(game, criminal)
+ * Fa un passo verso l'uscita, se il criminale è entro il raggio di fuga
+ * Restituisce true se si è mosso.
+ */
+function tryEscape(game, criminal) {
+  const path = getEscapePath(game, criminal)
+  if (!path.length) return false;
+
+  const next = path[0];
+  if (!canMoveTo(game, criminal, next)) return false;
+
+  criminal.x = next.x;
+  criminal.y = next.y;
+  return true;
+}
+
+/*
  * moveRandomly(game, criminal)
  * Sposta il criminale in una casella adiacente scelta a caso, tra quelle
  * libere e diverse dalla casella di Maigret (non gli finisce mai addosso).
@@ -107,7 +156,10 @@ function handleDanger(game, criminal) {
 
   if (distance > 5) return false;
 
-  if (!evadeMaigret(game, criminal, criminal.target)) {
+  const escapePath = getEscapePath(game, criminal);
+  const goal = escapePath.length ? escapePath[escapePath.length - 1] : criminal.target;
+
+if (!evadeMaigret(game, criminal, goal)) {
     fleeFromMaigret(game, criminal);
   }
   game.checkCapture();
@@ -214,6 +266,10 @@ function tryFreePrisoner(game, criminal) {
  */
 export function moveFifone(game, criminal) {
   if (handleDanger(game, criminal)) return;
+  if (tryEscape(game, criminal)) {
+  game.checkCapture();
+  return;
+}
   fleeFromMaigret(game, criminal);
   game.checkCapture();
 }
@@ -230,6 +286,10 @@ export function moveFifone(game, criminal) {
  */
 export function moveFurbo(game, criminal) {
   if (handleDanger(game, criminal)) return;
+  if (tryEscape(game, criminal)) {
+  game.checkCapture();
+  return;
+}
 
   const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
   if (!prisoners.length) {
@@ -254,6 +314,10 @@ export function moveFurbo(game, criminal) {
  */
 export function moveImprevedibile(game, criminal) {
   if (handleDanger(game, criminal)) return;
+  if (tryEscape(game, criminal)) {
+  game.checkCapture();
+  return;
+}
 
   if (Math.random() < 0.4) {
     moveRandomly(game, criminal);
@@ -285,6 +349,10 @@ export function moveImprevedibile(game, criminal) {
  */
 export function moveTemerario(game, criminal) {
   if (handleDanger(game, criminal)) return;
+  if (tryEscape(game, criminal)) {
+  game.checkCapture();
+  return;
+}
 
   const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
   if (!prisoners.length) {
@@ -327,5 +395,7 @@ export function moveCriminals(game) {
         fleeFromMaigret(game, criminal);
         game.checkCapture();
     }
-  }
+    game.checkEscape(criminal);
+    if (game.gameOver) return;
+   }
 }

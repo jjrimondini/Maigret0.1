@@ -35,8 +35,9 @@ let map = [];
 let cellPositions = [];
 let playerDelay = 0;
 let criminalDelay = 0;
-
+let scoreAtLevelStart = 0;
 let levelComplete = false;
+let levelLost = false;
 
 /*
  * Colore di ogni personalità, così in gioco si riconosce chi è chi.
@@ -49,15 +50,14 @@ const PERSONALITY_COLORS = {
 };
 
 /*
- * Coordinate (in caselle) delle quattro  "C" della mappa:
- * Ogni criminale parte dalla propria cella e ci torna quando viene arrestato.
+ * Coordinate (in caselle)  dai tioli della mappa
  */
-function findCells(currentMap) {
+function findTiles(currentMap, char) {
     const cells = [];
 
     for (let y = 0; y < currentMap.length; y++) {
         for (let x = 0; x < currentMap[y].length; x++) {
-            if (currentMap[y][x] === "C") {
+            if (currentMap[y][x] === char) {
                 cells.push({ x, y });
             }
         }
@@ -90,9 +90,9 @@ function findPlayerStart(currentMap) {
  */
 const game = {
   COLS:0, ROWS:0, map, TILE, canvas, ctx, statusText,
-  player: null, criminals: [], score: 0, caught: 0, gameOver: false,
-  checkCapture
-};
+  player: null, criminals: [],exit: [], score: 0, caught: 0, gameOver: false,
+  checkCapture, checkEscape
+};  
 
 /*
  * Variabili di temporizzazione e input:
@@ -114,11 +114,13 @@ function loadLevel(index) {
     if (index < 0 || index >= levels.length) return;
 
     currentLevelIndex = index;
+    scoreAtLevelStart = game.score;
 
     const level = levels[index];
 
     map = level.map;
-    cellPositions = findCells(map);
+    cellPositions = findTiles(map, "C");
+    game.exits = findTiles(map, "E")
 
     // Aggiorna anche la mappa usata dai moduli dei bot.
     game.map = map;
@@ -167,6 +169,7 @@ function loadLevel(index) {
     }
     game.gameOver = false;
     levelComplete = false;
+    levelLost=false
 
     document.getElementById("level-info").textContent = level.name;
 
@@ -249,6 +252,22 @@ function checkCapture() {
 }
 
 /*
+ * checkEscape(criminal): se il criminale (libero) si trova su un'uscita,
+ * è fuggito: la partita finisce e il livello è perso.
+ */
+function checkEscape(criminal) {
+    if (criminal.arrested) return;
+
+    const escaped = game.exits.some(e => e.x === criminal.x && e.y === criminal.y);
+    if (!escaped) return;
+
+    game.gameOver = true;
+    levelLost = true;
+    statusText.textContent =
+        `Un criminale è fuggito! | Punteggio: ${game.score} | Premi INVIO per riprovare`;
+}
+
+/*
  * Gestione della tastiera e del pulsante:
  * - keydown: quando un tasto viene premuto lo segna come "giù" in keys.
  *   Per frecce, WASD e spazio blocca il comportamento predefinito del browser
@@ -271,6 +290,10 @@ document.addEventListener("keydown", e => {
   ) {
     loadLevel(currentLevelIndex + 1);
   }
+  if (e.key === "Enter" && game.gameOver && levelLost) {
+    game.score = scoreAtLevelStart;
+    loadLevel(currentLevelIndex);
+}
 });
 document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
 document.getElementById("restart").addEventListener("click", restart);
@@ -334,6 +357,10 @@ function draw() {
           ctx.textBaseline = "middle";
           ctx.fillText("▤", px + 20, py + 20);
         }
+        if (map[y][x] === "E") {
+          ctx.fillStyle = "#111d30";
+          ctx.fillRect(px, py, TILE, TILE);
+        }
       }
     }
   }
@@ -349,7 +376,7 @@ function draw() {
   drawCharacter(game.player.x, game.player.y, "🕵️", "#60a5fa");
 
   // Schermata di fine partita o completamento livello
-  if (game.gameOver) {
+   if (game.gameOver) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -360,8 +387,11 @@ function draw() {
 
     let message = "PARTITA TERMINATA";
     let subtitle = "Premi Riavvia per ricominciare";
-
-    if (levelComplete) {
+  if (levelLost) {
+   message = "UN CRIMINALE È FUGGITO!";
+   subtitle = "Premi INVIO per riprovare il livello";
+   }
+ else if (levelComplete)  { 
       message = "LIVELLO COMPLETATO!";
       subtitle = "Premi INVIO per il livello successivo";
     } else if (
@@ -382,6 +412,7 @@ function draw() {
     ctx.textBaseline = "alphabetic";
   }
 }
+
 
 
 /*
