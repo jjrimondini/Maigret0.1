@@ -154,7 +154,6 @@ export const levels = [
             { type: "temerario", cell: 3, arrested: false },
             { type: "fifone", cell: 4, arrested: true },
             { type: "fifone", cell: 5, arrested: false },
-            { type: "fifone", cell: 6, arrested: false },
         ]
     },
     {
