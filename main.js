@@ -24,6 +24,8 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const statusText = document.getElementById("status");
 const TILE = 40;
+const STARTING_LIVES = 3;
+const POINTS_PER_LIFE = 1000;
 
 
 /*
@@ -38,6 +40,7 @@ let criminalDelay = 0;
 let scoreAtLevelStart = 0;
 let levelComplete = false;
 let levelLost = false;
+let gameLost = false;
 
 /*
  * Colore di ogni personalità, così in gioco si riconosce chi è chi.
@@ -53,17 +56,17 @@ const PERSONALITY_COLORS = {
  * Coordinate (in caselle)  dai tioli della mappa
  */
 function findTiles(currentMap, char) {
-    const cells = [];
+  const cells = [];
 
-    for (let y = 0; y < currentMap.length; y++) {
-        for (let x = 0; x < currentMap[y].length; x++) {
-            if (currentMap[y][x] === char) {
-                cells.push({ x, y });
-            }
-        }
+  for (let y = 0; y < currentMap.length; y++) {
+    for (let x = 0; x < currentMap[y].length; x++) {
+      if (currentMap[y][x] === char) {
+        cells.push({ x, y });
+      }
     }
+  }
 
-    return cells;
+  return cells;
 }
 
 /*
@@ -71,11 +74,11 @@ function findTiles(currentMap, char) {
  * cioè la casella di partenza di Maigret.
  */
 function findPlayerStart(currentMap) {
-    for (let y = 0; y < currentMap.length; y++) {
-        const x = currentMap[y].indexOf("P");
-        if (x !== -1) return { x, y };
-    }
-    return null;
+  for (let y = 0; y < currentMap.length; y++) {
+    const x = currentMap[y].indexOf("P");
+    if (x !== -1) return { x, y };
+  }
+  return null;
 }
 
 
@@ -89,10 +92,10 @@ function findPlayerStart(currentMap) {
  * una cattura quando è un criminale a finire addosso a Maigret).
  */
 const game = {
-  COLS:0, ROWS:0, map, TILE, canvas, ctx, statusText,
-  player: null, criminals: [],exit: [], score: 0, caught: 0, gameOver: false,
+  COLS: 0, ROWS: 0, map, TILE, canvas, ctx, statusText,
+  player: null, criminals: [], exits: [], score: 0, lives: STARTING_LIVES, livesEarned: 0, caught: 0, gameOver: false,
   checkCapture, checkEscape
-};  
+};
 
 /*
  * Variabili di temporizzazione e input:
@@ -111,75 +114,76 @@ const keys = {};
  */
 
 function loadLevel(index) {
-    if (index < 0 || index >= levels.length) return;
+  if (index < 0 || index >= levels.length) return;
 
-    currentLevelIndex = index;
-    scoreAtLevelStart = game.score;
+  currentLevelIndex = index;
+  scoreAtLevelStart = game.score;
 
-    const level = levels[index];
+  const level = levels[index];
 
-    map = level.map;
-    cellPositions = findTiles(map, "C");
-    game.exits = findTiles(map, "E")
+  map = level.map;
+  cellPositions = findTiles(map, "C");
+  game.exits = findTiles(map, "E")
 
-    // Aggiorna anche la mappa usata dai moduli dei bot.
-    game.map = map;
-    game.ROWS = map.length;
-    game.COLS = map[0].length;
-    // Tutte le righe devono avere la stessa lunghezza, altrimenti la mappa è "storta".
-    if (map.some(row => row.length !== game.COLS)) {
+  // Aggiorna anche la mappa usata dai moduli dei bot.
+  game.map = map;
+  game.ROWS = map.length;
+  game.COLS = map[0].length;
+  // Tutte le righe devono avere la stessa lunghezza, altrimenti la mappa è "storta".
+  if (map.some(row => row.length !== game.COLS)) {
     throw new Error(`Nel livello ${level.name} le righe della mappa non sono tutte lunghe uguali`);
-    }
+  }
 
-    // Il canvas si adatta alla mappa del livello.
-    canvas.width = game.COLS * TILE;
-    canvas.height = game.ROWS * TILE;
-    playerDelay = level.playerDelay;
-    criminalDelay = level.criminalDelay;
+  // Il canvas si adatta alla mappa del livello.
+  canvas.width = game.COLS * TILE;
+  canvas.height = game.ROWS * TILE;
+  playerDelay = level.playerDelay;
+  criminalDelay = level.criminalDelay;
 
-    const start = findPlayerStart(map);
-    if (!start) {
+  const start = findPlayerStart(map);
+  if (!start) {
     throw new Error(`Nel livello ${level.name} manca la "P" di Maigret`);
+  }
+  game.player = start;
+
+  game.criminals = level.bots.map((bot) => {
+    const cell = cellPositions[bot.cell];
+
+    if (!cell) {
+      throw new Error(
+        `Cella ${bot.cell} non valida nel livello ${level.name}`
+      );
     }
-    game.player = start;
 
-    game.criminals = level.bots.map((bot) => {
-        const cell = cellPositions[bot.cell];
+    return {
+      x: cell.x,
+      y: cell.y,
+      home: { ...cell },
+      target: null,
+      color: PERSONALITY_COLORS[bot.type] ?? "#9ca3af",
+      personality: bot.type,
+      arrested: bot.arrested === true
+    };
+  });
 
-        if (!cell) {
-            throw new Error(
-                `Cella ${bot.cell} non valida nel livello ${level.name}`
-            );
-        }
-
-        return {
-            x: cell.x,
-            y: cell.y,
-            home: { ...cell },
-            target: null,
-            color: PERSONALITY_COLORS[bot.type] ?? "#9ca3af",
-            personality: bot.type,
-            arrested: bot.arrested === true
-        };
-    });
-
-    game.caught = game.criminals.filter(c => c.arrested).length;
-    if (game.caught === game.criminals.length) {
+  game.caught = game.criminals.filter(c => c.arrested).length;
+  if (game.caught === game.criminals.length) {
     throw new Error(`Nel livello ${level.name} tutti i criminali sono già arrestati`);
-    }
-    game.gameOver = false;
-    levelComplete = false;
-    levelLost=false
+  }
+  game.gameOver = false;
+  levelComplete = false;
+  levelLost = false;
+  gameLost = false;
 
-    document.getElementById("level-info").textContent = level.name;
+  document.getElementById("level-info").textContent = level.name;
 
-    statusText.textContent =
-        `Criminali in libertà: ${game.criminals.length - game.caught} | Punteggio: ${game.score}`;
+  statusText.textContent =
+    `Criminali in libertà: ${game.criminals.length - game.caught} | Punteggio: ${game.score}`;
 
-    lastPlayerMove = 0;
-    lastEnemyMove = 0;
+  lastPlayerMove = 0;
+  lastEnemyMove = 0;
 
-    draw();
+  draw();
 }
 
 /*
@@ -187,8 +191,11 @@ function loadLevel(index) {
   */
 
 function restart() {
-    game.score = 0;
-    loadLevel(0);
+  game.score = 0;
+  game.lives = STARTING_LIVES;
+  game.livesEarned = 0;
+  updateLives();
+  loadLevel(0);
 }
 
 /*
@@ -216,39 +223,39 @@ function movePlayer(dx, dy) {
  * Se tutti i criminali sono stati arrestati, la partita finisce con la vittoria.
  */
 function checkCapture() {
-    for (const c of game.criminals) {
-        if (
-            !c.arrested &&
-            c.x === game.player.x &&
-            c.y === game.player.y
-        ) {
-            c.arrested = true;
-            game.caught++;
-            game.score += 100;
-
-            c.x = c.home.x;
-            c.y = c.home.y;
-        }
-    }
-
-    statusText.textContent =
-        `Arresti: ${game.caught}/${game.criminals.length}` +
-        ` | Punteggio: ${game.score}`;
-
+  for (const c of game.criminals) {
     if (
-        game.criminals.length > 0 &&
-        game.caught === game.criminals.length
+      !c.arrested &&
+      c.x === game.player.x &&
+      c.y === game.player.y
     ) {
-        game.gameOver = true;
-
-        if (currentLevelIndex < levels.length - 1) {
-            levelComplete = true;
-            statusText.textContent += " | Premi INVIO per il livello successivo";
-        } else {
-            statusText.textContent =
-                `Gioco completato! Punteggio finale: ${game.score}`;
-        }
+      c.arrested = true;
+      game.caught++;
+      game.score += 100;
+      checkBonusLife();
+      c.x = c.home.x;
+      c.y = c.home.y;
     }
+  }
+
+  statusText.textContent =
+    `Arresti: ${game.caught}/${game.criminals.length}` +
+    ` | Punteggio: ${game.score}`;
+
+  if (
+    game.criminals.length > 0 &&
+    game.caught === game.criminals.length
+  ) {
+    game.gameOver = true;
+
+    if (currentLevelIndex < levels.length - 1) {
+      levelComplete = true;
+      statusText.textContent += " | Premi INVIO per il livello successivo";
+    } else {
+      statusText.textContent =
+        `Gioco completato! Punteggio finale: ${game.score}`;
+    }
+  }
 }
 
 /*
@@ -256,17 +263,47 @@ function checkCapture() {
  * è fuggito: la partita finisce e il livello è perso.
  */
 function checkEscape(criminal) {
-    if (criminal.arrested) return;
+  if (criminal.arrested) return;
 
-    const escaped = game.exits.some(e => e.x === criminal.x && e.y === criminal.y);
-    if (!escaped) return;
+  const escaped = game.exits.some(e => e.x === criminal.x && e.y === criminal.y);
+  if (!escaped) return;
 
-    game.gameOver = true;
+  game.gameOver = true;
+  game.lives--;
+  updateLives();
+
+  if (game.lives > 0) {
     levelLost = true;
     statusText.textContent =
-        `Un criminale è fuggito! | Punteggio: ${game.score} | Premi INVIO per riprovare`;
+      `Un criminale è fuggito! Vite rimaste: ${game.lives} | Premi INVIO per riprovare`;
+  } else {
+    gameLost = true;
+    statusText.textContent =
+      `GAME OVER | Punteggio finale: ${game.score} | Premi INVIO per ricominciare`;
+  }
+}
+/*
+ * updateLives(): mostra le vite rimaste come cuori sotto il titolo.
+ */
+function updateLives() {
+  document.getElementById("lives").textContent =
+    game.lives > 0 ? "❤️".repeat(game.lives) : "💀";
 }
 
+/*
+ * checkBonusLife(): ogni POINTS_PER_LIFE punti regala una vita.
+ * livesEarned ricorda quante soglie sono già state premiate, così quando
+ * il punteggio viene ripristinato (livello riprovato) la stessa soglia
+ * non regala una seconda vita.
+ */
+function checkBonusLife() {
+  const milestones = Math.floor(game.score / POINTS_PER_LIFE);
+  if (milestones > game.livesEarned) {
+    game.lives += milestones - game.livesEarned;
+    game.livesEarned = milestones;
+    updateLives();
+  }
+}
 /*
  * Gestione della tastiera e del pulsante:
  * - keydown: quando un tasto viene premuto lo segna come "giù" in keys.
@@ -293,10 +330,16 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && game.gameOver && levelLost) {
     game.score = scoreAtLevelStart;
     loadLevel(currentLevelIndex);
-}
+  }
+  if (e.key === "Enter" && game.gameOver && gameLost) {
+    restart();
+  }
 });
-document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
-document.getElementById("restart").addEventListener("click", restart);
+document.getElementById("restart").addEventListener("click", e => {
+  restart();
+  e.currentTarget.blur();
+});
+document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; })
 
 /*
  * drawCharacter(x, y, emoji, color): disegna un personaggio nella casella (x, y).
@@ -376,7 +419,7 @@ function draw() {
   drawCharacter(game.player.x, game.player.y, "🕵️", "#60a5fa");
 
   // Schermata di fine partita o completamento livello
-   if (game.gameOver) {
+  if (game.gameOver) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -387,11 +430,15 @@ function draw() {
 
     let message = "PARTITA TERMINATA";
     let subtitle = "Premi Riavvia per ricominciare";
-  if (levelLost) {
-   message = "UN CRIMINALE È FUGGITO!";
-   subtitle = "Premi INVIO per riprovare il livello";
-   }
- else if (levelComplete)  { 
+
+    if (gameLost) {
+      message = "GAME OVER";
+      subtitle = "Hai finito le vite. Premi INVIO per ricominciare";
+    } else if (levelLost) {
+      message = "UN CRIMINALE È FUGGITO!";
+      subtitle = "Premi INVIO per riprovare il livello";
+    }
+    else if (levelComplete) {
       message = "LIVELLO COMPLETATO!";
       subtitle = "Premi INVIO per il livello successivo";
     } else if (
@@ -452,4 +499,4 @@ function loop(time) {
  * Avvio: prepara la prima partita e fa partire il ciclo di gioco.
  */
 restart();
-requestAnimationFrame(loop);
+requestAnimationFrame(loop); 
