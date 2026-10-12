@@ -38,6 +38,15 @@ const SHACKLE_TILE = "B";
 const SHACKLE_DURATION = 10000;
 const SHACKLE_SLOWDOWN = 2;
 
+/*
+ * Power-up "sbarre alle uscite": nella mappa è la lettera "S" (sbarre).
+ * Quando Maigret ci passa sopra, per BARS_DURATION ms tutte le uscite "E"
+ * sono chiuse da sbarre e diventano muri. Per i criminali la "S" è un
+ * normale corridoio: ci passano sopra senza effetti.
+ */
+const BARS_TILE = "S";
+const BARS_DURATION = 10000;
+
 
 /*
 *importazioni variabili di livello da level.js
@@ -54,6 +63,9 @@ let levelLost = false;
 let gameLost = false;
 let shackleTiles = [];   // caselle del power-up: { x, y, available }
 let shackleTimeLeft = 0; // ms rimanenti dell'effetto (> 0 = criminali incatenati)
+let barsTiles = [];      // caselle del power-up sbarre: { x, y, available }
+let barsTimeLeft = 0;    // ms rimanenti dell'effetto (> 0 = uscite sbarrate)
+let lockedMap = [];      // copia della mappa con le uscite trasformate in muri
 
 /*
  * currentCriminalDelay(): il ritardo tra un passo e l'altro dei criminali,
@@ -172,6 +184,10 @@ function loadLevel(index) {
   game.exits = findTiles(map, "E")
   shackleTiles = findTiles(map, SHACKLE_TILE).map(t => ({ ...t, available: true }));
   shackleTimeLeft = 0;
+  barsTiles = findTiles(map, BARS_TILE).map(t => ({ ...t, available: true }));
+  barsTimeLeft = 0;
+  // Copia (non modifica l'array di levels.js, che serve intatto se si riprova il livello)
+  lockedMap = map.map(row => row.replaceAll("E", "#"));
 
   // Aggiorna anche la mappa usata dai moduli dei bot.
   game.map = map;
@@ -262,6 +278,7 @@ function movePlayer(dx, dy) {
     game.player.x = nx;
     game.player.y = ny;
     checkShackle();
+    checkBars();
     checkCapture();
   }
 }
@@ -280,7 +297,41 @@ function checkShackle() {
 
   tile.available = false;
   shackleTimeLeft = SHACKLE_DURATION;
-  spawnShackleEffect(tile);
+  spawnPowerUpEffect(tile, "PALLA AL PIEDE!", ["#9ca3af", "#fb923c"]);
+}
+
+/*
+ * checkBars(): se Maigret entra in una casella con le sbarre (ancora
+ * disponibile), la raccoglie: per BARS_DURATION ms le uscite sono sbarrate.
+ * Il trucco: game.map (quella che leggono wall() e quindi i criminali)
+ * diventa la copia in cui le uscite sono muri "#".
+ * Se l'effetto era già attivo, il countdown riparte da capo.
+ */
+function checkBars() {
+  const tile = barsTiles.find(t =>
+    t.available && t.x === game.player.x && t.y === game.player.y
+  );
+  if (!tile) return;
+
+  tile.available = false;
+  barsTimeLeft = BARS_DURATION;
+  game.map = lockedMap;
+  spawnPowerUpEffect(tile, "USCITE SBARRATE!", ["#9ca3af", "#4ade80"]);
+  for (const e of game.exits) spawnPowerUpEffect(e, null, ["#e5e7eb", "#4ade80"]);
+}
+
+/*
+ * updateBars(dt): fa scorrere il countdown delle sbarre. Allo scadere le
+ * uscite si riaprono (torna la mappa originale) e le icone ricompaiono.
+ */
+function updateBars(dt) {
+  if (barsTimeLeft <= 0) return;
+  barsTimeLeft -= dt;
+  if (barsTimeLeft <= 0) {
+    barsTimeLeft = 0;
+    game.map = map;
+    for (const t of barsTiles) t.available = true;
+  }
 }
 
 /*
@@ -900,8 +951,9 @@ function drawBallAndChain(s) {
 }
 
 /*
- * Icona del power-up in pixel art (pixel più piccoli degli sprite):
- * cavigliera aperta in alto, catena e palla di ferro con riflesso.
+ * Icone dei power-up in pixel art (pixel più piccoli degli sprite).
+ * - Palla al piede: cavigliera aperta in alto, catena e palla di ferro con riflesso.
+ * - Sbarre: telaio d'acciaio con quattro sbarre, una traversa e un lucchetto dorato.
  */
 const SHACKLE_ICON = [
   ".GGGG.....",
@@ -922,16 +974,34 @@ const SHACKLE_ICON_PALETTE = {
   G: "#d1d5db", g: "#6b7280", O: "#0b0f19", B: "#4b5563", b: "#1f2937", W: "#f9fafb"
 };
 
+const BARS_ICON = [
+  "FFFFFFFFFFF",
+  "F.G.G.G.G.F",
+  "F.G.G.G.G.F",
+  "F.G.G.G.G.F",
+  "FFFFFFFFFFF",
+  "F.G.lll.G.F",
+  "F.G.l.l.G.F",
+  "F.GLLLLLG.F",
+  "F.GLLKLLG.F",
+  "F.GLLKLLG.F",
+  "F.GLLLLLG.F",
+  "FFFFFFFFFFF"
+];
+const BARS_ICON_PALETTE = {
+  F: "#e5e7eb", G: "#9ca3af", L: "#facc15", l: "#a16207", K: "#111827"
+};
+
 /*
- * drawShackleIcon(cx, cy, px): disegna l'icona centrata in (cx, cy),
- * con pixel grandi "px".
+ * drawIcon(rows, palette, cx, cy, px): disegna un'icona in pixel art
+ * centrata in (cx, cy), con pixel grandi "px".
  */
-function drawShackleIcon(cx, cy, px) {
-  const left = Math.round(cx - (SHACKLE_ICON[0].length * px) / 2);
-  const top = Math.round(cy - (SHACKLE_ICON.length * px) / 2);
-  for (let r = 0; r < SHACKLE_ICON.length; r++) {
-    for (let c = 0; c < SHACKLE_ICON[r].length; c++) {
-      const color = SHACKLE_ICON_PALETTE[SHACKLE_ICON[r][c]];
+function drawIcon(rows, palette, cx, cy, px) {
+  const left = Math.round(cx - (rows[0].length * px) / 2);
+  const top = Math.round(cy - (rows.length * px) / 2);
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      const color = palette[rows[r][c]];
       if (!color) continue;
       ctx.fillStyle = color;
       ctx.fillRect(left + c * px, top + r * px, px, px);
@@ -940,76 +1010,148 @@ function drawShackleIcon(cx, cy, px) {
 }
 
 /*
- * drawShackleTile(t): il power-up sulla mappa, con alone arancio pulsante
+ * drawPowerUpTile(t, rows, palette, rgb, hex): un power-up sulla mappa,
+ * con alone pulsante del colore dato (rgb = "r, g, b", hex = "#rrggbb")
  * e l'icona che fluttua su e giù.
  */
-function drawShackleTile(t) {
+function drawPowerUpTile(t, rows, palette, rgb, hex) {
   const cx = t.x * TILE + TILE / 2;
   const cy = t.y * TILE + TILE / 2;
   const pulse = 0.5 + 0.5 * Math.sin(now / 220);
 
   ctx.save();
   const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, TILE / 2);
-  glow.addColorStop(0, `rgba(251, 146, 60, ${0.25 + 0.3 * pulse})`);
-  glow.addColorStop(1, "rgba(251, 146, 60, 0)");
+  glow.addColorStop(0, `rgba(${rgb}, ${0.25 + 0.3 * pulse})`);
+  glow.addColorStop(1, `rgba(${rgb}, 0)`);
   ctx.fillStyle = glow;
   ctx.fillRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
-  ctx.shadowColor = "#fb923c";
+  ctx.shadowColor = hex;
   ctx.shadowBlur = 6 + 6 * pulse;
-  drawShackleIcon(cx, cy + Math.round(Math.sin(now / 300) * 2), 2);
+  drawIcon(rows, palette, cx, cy + Math.round(Math.sin(now / 300) * 2), 2);
   ctx.restore();
 }
 
 /*
- * drawShackleHud(): mentre l'effetto è attivo, in alto a destra della mappa
- * un riquadro con l'icona, i secondi rimanenti e una barra che si accorcia.
+ * drawTimerHud(slot, rows, palette, timeLeft, duration, color): in alto a
+ * destra della mappa un riquadro con l'icona del power-up attivo, i secondi
+ * rimanenti e una barra che si accorcia. "slot" impila i riquadri quando
+ * sono attivi più effetti insieme (0 = il primo in alto).
  * Negli ultimi 3 secondi il numero diventa rosso e lampeggia.
  */
-function drawShackleHud() {
-  if (shackleTimeLeft <= 0) return;
-
+function drawTimerHud(slot, rows, palette, timeLeft, duration, color) {
   const w = 92;
   const h = 42;
   const x = canvas.width - w - 8;
-  const y = 8;
-  const seconds = Math.ceil(shackleTimeLeft / 1000);
+  const y = 8 + slot * (h + 6);
+  const seconds = Math.ceil(timeLeft / 1000);
   const ending = seconds <= 3;
-  const color = ending ? "#f87171" : "#fb923c";
+  const frame = ending ? "#f87171" : color;
 
   ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
   ctx.fillRect(x, y, w, h);
   ctx.save();
-  ctx.shadowColor = color;
+  ctx.shadowColor = frame;
   ctx.shadowBlur = 8;
-  ctx.strokeStyle = color;
+  ctx.strokeStyle = frame;
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
   ctx.restore();
 
-  drawShackleIcon(x + 20, y + 18, 2);
+  drawIcon(rows, palette, x + 20, y + 18, 2);
 
   if (!ending || blink(200)) {
+    const text = String(seconds).padStart(2, "0");
     ctx.font = '14px "Press Start 2P", monospace';
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#000000";
-    ctx.fillText(String(seconds).padStart(2, "0"), x + 44, y + 20);
+    ctx.fillText(text, x + 44, y + 20);
     ctx.fillStyle = ending ? "#f87171" : "#ffffff";
-    ctx.fillText(String(seconds).padStart(2, "0"), x + 42, y + 18);
+    ctx.fillText(text, x + 42, y + 18);
   }
 
   // Barra del tempo rimanente
   ctx.fillStyle = "#1f2937";
   ctx.fillRect(x + 6, y + h - 7, w - 12, 3);
-  ctx.fillStyle = color;
-  ctx.fillRect(x + 6, y + h - 7, Math.round((w - 12) * shackleTimeLeft / SHACKLE_DURATION), 3);
+  ctx.fillStyle = frame;
+  ctx.fillRect(x + 6, y + h - 7, Math.round((w - 12) * timeLeft / duration), 3);
 }
 
 /*
- * spawnShackleEffect(t): quando Maigret raccoglie il power-up, scintille
- * color acciaio e la scritta "PALLA AL PIEDE!" (tenuta dentro il canvas).
+ * drawPowerUpHud(): i riquadri dei power-up attivi, uno sotto l'altro.
  */
-function spawnShackleEffect(t) {
+function drawPowerUpHud() {
+  let slot = 0;
+  if (shackleTimeLeft > 0) {
+    drawTimerHud(slot++, SHACKLE_ICON, SHACKLE_ICON_PALETTE, shackleTimeLeft, SHACKLE_DURATION, "#fb923c");
+  }
+  if (barsTimeLeft > 0) {
+    drawTimerHud(slot++, BARS_ICON, BARS_ICON_PALETTE, barsTimeLeft, BARS_DURATION, "#4ade80");
+  }
+}
+
+/*
+ * drawExitBars(e): l'uscita chiusa da un cancello di sbarre d'acciaio con
+ * alone verde (come le celle) e un lucchetto. Le frecce rosse spariscono.
+ * - All'attivazione le sbarre calano dall'alto come una saracinesca.
+ * - Negli ultimi 3 secondi sfarfallano: stanno per riaprirsi.
+ */
+function drawExitBars(e) {
+  const px = e.x * TILE;
+  const py = e.y * TILE;
+  const m = 4;                 // margine del cancello dal bordo della casella
+  const inner = TILE - 2 * m;
+  const drop = Math.min(1, (BARS_DURATION - barsTimeLeft) / 250);
+  const h = Math.round(inner * drop);
+
+  ctx.fillStyle = "rgba(127, 29, 29, 0.45)";
+  ctx.fillRect(px, py, TILE, TILE);
+
+  ctx.save();
+  if (barsTimeLeft < 3000 && !blink(150)) ctx.globalAlpha = 0.35;
+
+  // Trave in alto (da dove scendono le sbarre)
+  ctx.fillStyle = "#4b5563";
+  ctx.fillRect(px + m - 1, py + m - 2, inner + 2, 3);
+
+  // Sbarre con riflesso
+  ctx.shadowColor = "#22c55e";
+  ctx.shadowBlur = 8;
+  for (const off of [3, 11, 18, 26]) {
+    ctx.fillStyle = "#9ca3af";
+    ctx.fillRect(px + m + off, py + m, 3, h);
+  }
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#e5e7eb";
+  for (const off of [3, 11, 18, 26]) ctx.fillRect(px + m + off, py + m, 1, h);
+
+  if (drop === 1) {
+    // Traverse e trave a terra
+    ctx.fillStyle = "#6b7280";
+    ctx.fillRect(px + m, py + m + 9, inner, 2);
+    ctx.fillRect(px + m - 1, py + TILE - m - 1, inner + 2, 3);
+
+    // Lucchetto al centro
+    const cx = px + TILE / 2;
+    const cy = py + TILE / 2 + 3;
+    ctx.fillStyle = "#a16207";
+    ctx.fillRect(cx - 3, cy - 5, 6, 1);
+    ctx.fillRect(cx - 3, cy - 5, 1, 3);
+    ctx.fillRect(cx + 2, cy - 5, 1, 3);
+    ctx.fillStyle = "#facc15";
+    ctx.fillRect(cx - 4, cy - 2, 8, 6);
+    ctx.fillStyle = "#111827";
+    ctx.fillRect(cx - 1, cy, 2, 3);
+  }
+  ctx.restore();
+}
+
+/*
+ * spawnPowerUpEffect(t, text, colors): quando Maigret raccoglie un power-up,
+ * scintille nei colori dati e (se c'è) una scritta che sale, tenuta dentro
+ * il canvas. Nel font pixel a 12px ogni lettera è larga 12px.
+ */
+function spawnPowerUpEffect(t, text, colors) {
   const cx = t.x * TILE + TILE / 2;
   const cy = t.y * TILE + TILE / 2;
 
@@ -1018,12 +1160,13 @@ function spawnShackleEffect(t) {
     const s = 0.05 + Math.random() * 0.12;
     effects.push({
       type: "spark", x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-      life: 600, max: 600, color: i % 2 ? "#9ca3af" : "#fb923c"
+      life: 600, max: 600, color: colors[i % colors.length]
     });
   }
-  const half = 95; // metà larghezza della scritta a 12px
+  if (!text) return;
+  const half = text.length * 6 + 5;
   const tx = Math.min(Math.max(cx, half), canvas.width - half);
-  effects.push({ type: "text", x: tx, y: cy - 12, vx: 0, vy: -0.035, life: 1200, max: 1200, text: "PALLA AL PIEDE!" });
+  effects.push({ type: "text", x: tx, y: cy - 12, vx: 0, vy: -0.035, life: 1200, max: 1200, text });
 }
 
 /*
@@ -1776,8 +1919,16 @@ function draw() {
 
   if (background) ctx.drawImage(background, 0, 0);
 
-  for (const e of game.exits) drawExit(e);
-  for (const t of shackleTiles) if (t.available) drawShackleTile(t);
+  for (const e of game.exits) {
+    if (barsTimeLeft > 0) drawExitBars(e);
+    else drawExit(e);
+  }
+  for (const t of shackleTiles) {
+    if (t.available) drawPowerUpTile(t, SHACKLE_ICON, SHACKLE_ICON_PALETTE, "251, 146, 60", "#fb923c");
+  }
+  for (const t of barsTiles) {
+    if (t.available) drawPowerUpTile(t, BARS_ICON, BARS_ICON_PALETTE, "74, 222, 128", "#4ade80");
+  }
 
   // Personaggi, ordinati per riga disegnata
   const shackled = shackleTimeLeft > 0;
@@ -1789,7 +1940,7 @@ function draw() {
   for (const a of actors) drawCharacter(a.entity, a.sprite, a.palette, a.pipe, a.shackled);
 
   drawEffects();
-  drawShackleHud();
+  drawPowerUpHud();
 
   if (game.gameOver) {
     if (gameLost) drawGameOverScreen();
@@ -1813,7 +1964,7 @@ function draw() {
  *   - Giocatore: al massimo un passo ogni playerDelay ms. Legge i tasti premuti e
  *     sceglie UNA sola direzione (priorità: su, giù, sinistra, destra — niente
  *     diagonali); se c'è una direzione, muove Maigret e memorizza l'istante del passo.
- *   - Palla al piede: scorre il countdown dell'effetto.
+ *   - Power-up: scorrono i countdown di palla al piede e sbarre.
  *   - Criminali: si muovono tutti insieme ogni criminalDelay ms (il doppio
  *     mentre hanno la palla al piede).
  *   - Grafica: fa scorrere le posizioni disegnate verso quelle vere.
@@ -1842,7 +1993,10 @@ function loop(time) {
     }
   }
 
-  if (active && !game.gameOver) updateShackle(dt);
+  if (active && !game.gameOver) {
+    updateShackle(dt);
+    updateBars(dt);
+  }
 
   if (active && !game.gameOver && time - lastEnemyMove > currentCriminalDelay()) {
     moveCriminals(game);
