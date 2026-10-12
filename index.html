@@ -1,23 +1,57 @@
+<!--
+  index.html — Pagina principale del gioco "Maigret: Caccia alla Fuga".
+  Questo file contiene solo la "cornice" del gioco: titolo, istruzioni,
+  l'area di disegno (canvas), il pulsante per ricominciare e la riga di stato.
+  Tutta la logica di gioco (movimento, criminali, cella, punteggio) sta in main.js,
+  che viene caricato in fondo alla pagina.
+-->
+<!-- Dichiara che il documento è HTML5 (il browser usa la modalità standard) -->
 <!DOCTYPE html>
+<!-- Radice del documento; lang="it" indica che il contenuto è in italiano (utile per accessibilità e motori di ricerca) -->
 <html lang="it">
+<!-- <head>: metadati e stili, non visibili direttamente nella pagina -->
 <head>
+  <!-- Codifica dei caratteri UTF-8: permette accenti (à, è) ed emoji (🕵️) -->
   <meta charset="UTF-8">
+  <!-- Rende la pagina adatta ai dispositivi mobili: larghezza = schermo, zoom iniziale 100% -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Testo mostrato nella scheda del browser) -->
   <title>Maigret: Caccia alla Fuga</title>
+  <!-- Fogli di stile CSS incorporati nella pagina -->
   <style>
+    /* Pagina: nessun margine, sfondo blu notte scuro, testo quasi bianco, font semplice, tutto centrato */
     body { margin: 0; background: #101827; color: #f3f4f6; font-family: Arial, sans-serif; text-align: center; }
+    /* Titolo principale: riduce lo spazio sotto per avvicinarlo alle istruzioni */
     h1 { margin-bottom: 5px; }
+    /* Paragrafi (istruzioni e stato): grigio-azzurro chiaro, meno evidente del titolo */
     p { color: #cbd5e1; }
+    /* Area di gioco: larga al massimo 760px ma mai più del 95% della finestra (si adatta agli schermi piccoli);
+       height:auto mantiene le proporzioni; bordo grigio con angoli arrotondati e sfondo quasi nero */
     canvas { width: min(95vw, 760px); height: auto; border: 3px solid #64748b; border-radius: 8px; background: #0b1220; }
+    /* Pulsanti: giallo ocra con testo scuro, senza bordo, angoli arrotondati, grassetto,
+       e cursore a "manina" al passaggio del mouse */
     button { margin: 8px; padding: 10px 18px; border: 0; border-radius: 7px; background: #eab308; color: #111827; font-size: 16px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
+<!-- <body>: tutto ciò che è visibile nella pagina -->
 <body>
+  <!-- Titolo del gioco con l'emoji del detective -->
   <h1>🕵️ Maigret: Caccia alla Fuga</h1>
+  <p id="level-info">Livello 1</p>
+  <!-- Istruzioni per il giocatore: si muove con le frecce o con W/A/S/D -->
   <p>Frecce o WASD per muoverti. Raggiungi i criminali e riportali in cella!</p>
+  <!-- La "tela" su cui main.js disegna il gioco. width/height (760x520) sono la risoluzione interna
+       in pixel usata per il disegno; la dimensione mostrata a schermo invece la decide il CSS sopra.
+       id="game" serve a main.js per trovarla (es. document.getElementById("game")) -->
   <canvas id="game" width="760" height="520"></canvas>
+  <!-- Pulsante per ricominciare da capo; main.js lo trova tramite id="restart" e gli collega l'azione -->
   <div><button id="restart">Nuova partita</button></div>
+  <!-- Riga di stato: il testo iniziale dice che ci sono 4 criminali in fuga;
+       main.js la aggiorna (tramite id="status") man mano che li catturi -->
   <p id="status">Criminali in libertà: 4</p>
+  <!-- Carica la logica del gioco. type="module" lo tratta come modulo JavaScript moderno
+       (può usare import/export ed è eseguito dopo che la pagina è stata letta, quindi
+       canvas, pulsante e stato esistono già quando parte) -->
   <script type="module" src="main.js"></script>
 </body>
 </html>

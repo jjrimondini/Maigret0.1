@@ -1,11 +1,34 @@
 // Funzioni di supporto usate dall'intelligenza dei criminali.
 // Lo stato del gioco viene passato tramite "game", evitando variabili globali.
 
+/*
+ * wall(game, x, y)
+ * Dice se la casella (x, y) NON è percorribile.
+ * Restituisce true se la casella è fuori dalla mappa (coordinate negative o
+ * oltre COLS/ROWS) oppure se nella mappa contiene un muro "#".
+ * È usata ovunque serva sapere se ci si può spostare in una casella:
+ * dal giocatore (main.js) e da tutte le funzioni di ricerca del percorso qui sotto.
+ */
 export function wall(game, x, y) {
   return x < 0 || y < 0 || x >= game.COLS || y >= game.ROWS ||
          game.map[y][x] === "#";
 }
 
+/*
+ * findPath(game, start, target)
+ * Trova il percorso più breve da "start" a "target" con una ricerca in
+ * ampiezza (BFS): parte da start ed esplora le caselle vicine (destra,
+ * sinistra, giù, su) "a cerchi concentrici", quindi la prima volta che
+ * raggiunge il target ha trovato la strada più corta.
+ * - Evita i muri e le caselle occupate da criminali liberi; NON tiene conto
+ *   di dove si trova Maigret.
+ * - La mappa "previous" ricorda da quale casella si è arrivati a ciascuna
+ *   casella: arrivati al target si ripercorre all'indietro fino a start
+ *   per ricostruire il cammino.
+ * Restituisce l'elenco delle caselle da attraversare (esclusa la partenza,
+ * incluso l'arrivo), quindi la sua lunghezza è il numero di passi.
+ * Restituisce un array vuoto se non c'è un target o se è irraggiungibile.
+ */
 export function findPath(game, start, target) {
   if (!target) return [];
 
@@ -49,6 +72,21 @@ export function findPath(game, start, target) {
   return [];
 }
 
+/*
+ * findSafePath(game, start, target, criminal)
+ * Come findPath cerca una strada da "start" a "target", ma preferisce le
+ * strade che stanno lontane da Maigret.
+ * - A ogni giro ordina le caselle da esplorare per un "punteggio":
+ *   lunghezza del percorso fatto finora + una penalità se la casella è a
+ *   meno di 5 passi da Maigret (4 punti per ogni passo sotto i 5).
+ *   Esplora sempre per prima la casella col punteggio più basso.
+ * - Non passa mai sulla casella di Maigret, né sui muri, né sulle caselle
+ *   occupate da altri criminali liberi (il criminale stesso viene ignorato).
+ * - Ogni elemento in coda si porta dietro il proprio percorso ("path"),
+ *   quindi quando si raggiunge il target lo si restituisce direttamente.
+ * Il risultato è un percorso "abbastanza sicuro", non per forza il più corto.
+ * Restituisce un array vuoto se non c'è un target o se è irraggiungibile.
+ */
 export function findSafePath(game, start, target, criminal) {
   if (!target) return [];
 
@@ -93,6 +131,20 @@ export function findSafePath(game, start, target, criminal) {
   return [];
 }
 
+/*
+ * chooseCellTarget(game, criminal)
+ * Sceglie verso quale cella deve dirigersi il criminale, cioè la cella
+ * ("home") di un compagno già arrestato. Non restituisce nulla: scrive la
+ * scelta direttamente in criminal.target.
+ * - Se non ci sono compagni arrestati, il target diventa null.
+ * - Esclude le celle già scelte come target da altri criminali liberi
+ *   ("riservate"), così non vanno tutti nello stesso posto; se però sono
+ *   tutte riservate, le considera comunque tutte.
+ * - Se il criminale è "furbo" sceglie la cella più vicina (calcolata con
+ *   findPath); con qualsiasi altra personalità ne sceglie una a caso.
+ * Il target è una copia delle coordinate, così modificarlo non altera la
+ * "home" del prigioniero.
+ */
 export function chooseCellTarget(game, criminal) {
   const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
   if (prisoners.length === 0) {
@@ -121,6 +173,22 @@ export function chooseCellTarget(game, criminal) {
   criminal.target = { ...target.home };
 }
 
+/*
+ * evadeMaigret(game, criminal, target)
+ * Fa fare al criminale UN passo, scegliendo la casella vicina migliore per
+ * scappare da Maigret e, se c'è un target, avvicinarsi a esso.
+ * - Considera le 4 caselle adiacenti e scarta muri, la casella di Maigret
+ *   e quelle occupate da altri criminali liberi.
+ * - Se non resta nessuna mossa possibile restituisce false (il criminale è
+ *   bloccato e non si muove).
+ * - A ogni mossa possibile dà un punteggio (più basso = migliore):
+ *   distanza dal target in passi (via findPath; 1000 se irraggiungibile,
+ *   0 se non c'è target) + penalità di pericolo (3 punti per ogni passo
+ *   sotto i 5 di distanza da Maigret, contando caselle in orizzontale +
+ *   in verticale e ignorando i muri).
+ * - Tra le mosse col punteggio migliore ne sceglie una a caso, sposta il
+ *   criminale lì e restituisce true.
+ */
 export function evadeMaigret(game, criminal, target) {
   const options = [
     { x: criminal.x + 1, y: criminal.y },
