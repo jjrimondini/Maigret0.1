@@ -28,6 +28,16 @@ const TILE = 40;
 const STARTING_LIVES = 3;
 const POINTS_PER_LIFE = 1000;
 
+/*
+ * Power-up "palla al piede": nella mappa è la lettera "B" (ball).
+ * Quando Maigret ci passa sopra, per SHACKLE_DURATION ms tutti i criminali
+ * hanno la palla al piede e vanno SHACKLE_SLOWDOWN volte più lenti.
+ * Per i criminali la "B" è un normale corridoio: ci passano sopra senza effetti.
+ */
+const SHACKLE_TILE = "B";
+const SHACKLE_DURATION = 10000;
+const SHACKLE_SLOWDOWN = 2;
+
 
 /*
 *importazioni variabili di livello da level.js
@@ -42,6 +52,16 @@ let scoreAtLevelStart = 0;
 let levelComplete = false;
 let levelLost = false;
 let gameLost = false;
+let shackleTiles = [];   // caselle del power-up: { x, y, available }
+let shackleTimeLeft = 0; // ms rimanenti dell'effetto (> 0 = criminali incatenati)
+
+/*
+ * currentCriminalDelay(): il ritardo tra un passo e l'altro dei criminali,
+ * raddoppiato mentre hanno la palla al piede.
+ */
+function currentCriminalDelay() {
+  return criminalDelay * (shackleTimeLeft > 0 ? SHACKLE_SLOWDOWN : 1);
+}
 
 /*
  * Colore di ogni personalità, così in gioco si riconosce chi è chi.
@@ -150,6 +170,8 @@ function loadLevel(index) {
   map = level.map;
   cellPositions = findTiles(map, "C");
   game.exits = findTiles(map, "E")
+  shackleTiles = findTiles(map, SHACKLE_TILE).map(t => ({ ...t, available: true }));
+  shackleTimeLeft = 0;
 
   // Aggiorna anche la mappa usata dai moduli dei bot.
   game.map = map;
@@ -239,7 +261,38 @@ function movePlayer(dx, dy) {
   if (!wall(game, nx, ny)) {
     game.player.x = nx;
     game.player.y = ny;
+    checkShackle();
     checkCapture();
+  }
+}
+
+/*
+ * checkShackle(): se Maigret entra in una casella con la palla al piede
+ * (ancora disponibile), la raccoglie: l'icona sparisce dalla mappa e per
+ * SHACKLE_DURATION ms i criminali sono incatenati e rallentati.
+ * Se l'effetto era già attivo, il countdown riparte da capo.
+ */
+function checkShackle() {
+  const tile = shackleTiles.find(t =>
+    t.available && t.x === game.player.x && t.y === game.player.y
+  );
+  if (!tile) return;
+
+  tile.available = false;
+  shackleTimeLeft = SHACKLE_DURATION;
+  spawnShackleEffect(tile);
+}
+
+/*
+ * updateShackle(dt): fa scorrere il countdown della palla al piede.
+ * Allo scadere l'effetto svanisce e le icone tornano disponibili sulla mappa.
+ */
+function updateShackle(dt) {
+  if (shackleTimeLeft <= 0) return;
+  shackleTimeLeft -= dt;
+  if (shackleTimeLeft <= 0) {
+    shackleTimeLeft = 0;
+    for (const t of shackleTiles) t.available = true;
   }
 }
 
@@ -687,12 +740,15 @@ function drawHands(left, bodyTop, side, frame, palette, mirror) {
  * - pipe: dalla pipa esce un filo di fumo quando è fermo (Maigret)
  * - hatUp: Maigret alza il cappello per salutare (schermata di vittoria)
  * - sack: il ladro porta sulle spalle il sacco del bottino
+ * - shackled: il ladro ha la palla al piede (cammina più lento e la trascina)
  * È usata sia in gioco (drawCharacter) sia nelle schermate (menu, pausa, fine).
  */
 function drawSprite(cx, feetY, opts) {
-  const { sprite, palette, dir = "down", walking = false, walkTime = 0 } = opts;
-  const frame = walking ? Math.floor(walkTime / WALK_FRAME_MS) % 4 : 0;
-  const bob = walking ? (frame % 2 === 0 ? -2 : 0) : (Math.floor(now / 600) % 2 ? -1 : 0);
+  const { sprite, palette, dir = "down", walking = false, walkTime = 0, shackled = false } = opts;
+  // Con la palla al piede la camminata è più lenta e "pesante" (rimbalzo ridotto)
+  const frameMs = shackled ? WALK_FRAME_MS * 2 : WALK_FRAME_MS;
+  const frame = walking ? Math.floor(walkTime / frameMs) % 4 : 0;
+  const bob = walking ? (frame % 2 === 0 ? (shackled ? -1 : -2) : 0) : (Math.floor(now / 600) % 2 ? -1 : 0);
 
   const left = Math.round(cx - (SPRITE_COLS / 2) * U);
   const bodyTop = feetY - SPRITE_ROWS * U + bob;
@@ -718,9 +774,17 @@ function drawSprite(cx, feetY, opts) {
     rows = ["............", "............", "...RRRRRR...", ...rows.slice(3)];
   }
 
+  // Palla al piede: dietro al personaggio va disegnata prima del corpo,
+  // davanti (quando cammina verso l'alto) dopo
+  const shackle = shackled ? shackleGeometry(cx, left, feetY, dir, side, mirror, walking, frame) : null;
+  if (shackle && !shackle.front) drawBallAndChain(shackle);
+
   drawLegs(left, bodyTop + 10 * U, feetY, side, frame, palette, mirror);
+  if (shackle) drawAnkleCuff(shackle);
   drawBitmap(rows, left, bodyTop, palette, mirror);
   drawHands(left, bodyTop, side, frame, palette, mirror);
+
+  if (shackle && shackle.front) drawBallAndChain(shackle);
 
   if (opts.hatUp && !side) {
     // braccio alzato e cappello che sventola sopra la testa
@@ -744,6 +808,225 @@ function drawSprite(cx, feetY, opts) {
 }
 
 /*
+ * shackleGeometry(...): calcola dove stanno cavigliera, catena e palla di un
+ * ladro incatenato, in base a dove guarda e al fotogramma della camminata.
+ * - Di profilo: la palla resta dietro, sul lato opposto alla direzione.
+ * - Di fronte (dir "down"): la palla è dietro di lui, di lato e un po' più in alto.
+ * - Di spalle (dir "up"): la palla è "davanti" a noi, più in basso, e copre le gambe.
+ * Mentre cammina la palla viene trascinata a strattoni: a ogni passo si
+ * avvicina di qualche pixel, fa un piccolo saltello e la catena si tende.
+ */
+function shackleGeometry(cx, left, feetY, dir, side, mirror, walking, frame) {
+  const pulling = walking && frame % 2 === 1;
+  let legCol, lift, bx, by, front = false;
+
+  if (side) {
+    legCol = frame % 2 === 0 ? 5 : 3;      // gamba dietro (vedi drawLegs)
+    lift = frame % 2 === 0 ? 0 : U;        // tallone sollevato nel passo
+    const back = mirror ? 1 : -1;          // lato opposto alla direzione
+    bx = cx + back * (pulling ? 14 : 17);
+    by = feetY - 4;
+  } else if (dir === "up") {
+    legCol = 3;
+    lift = frame === 1 ? U : 0;
+    bx = cx - (pulling ? 10 : 12);
+    by = feetY + 1;
+    front = true;
+  } else {
+    legCol = 7;
+    lift = frame === 3 ? U : 0;
+    bx = cx + (pulling ? 11 : 13);
+    by = feetY - 7;
+  }
+  if (pulling) by -= 1; // saltello della palla trascinata
+
+  const ankleY = feetY - lift - U - 2;
+  const col = mirror ? SPRITE_COLS - legCol - 2 : legCol;
+  return {
+    left, legCol, mirror, ankleY,
+    ax: left + col * U + U, ay: ankleY + 1,
+    bx, by, front,
+    sag: pulling ? 0 : 3 // catena tesa quando tira, morbida da fermo
+  };
+}
+
+/*
+ * drawAnkleCuff(s): la cavigliera di ferro sopra la scarpa.
+ */
+function drawAnkleCuff(s) {
+  block(s.left, s.legCol, s.ankleY, 2, 2, "#9ca3af", s.mirror);
+  ctx.fillStyle = "#e5e7eb";
+  ctx.fillRect(s.ax - 1, s.ankleY, 1, 1);
+}
+
+/*
+ * drawBallAndChain(s): catena a maglie (con un po' di "pancia" quando è
+ * allentata) dalla caviglia alla palla di ferro, con ombra e riflesso.
+ */
+function drawBallAndChain(s) {
+  const R = 5;
+  // Ombra della palla
+  ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+  ctx.beginPath();
+  ctx.ellipse(s.bx, s.by + R - 1, R + 1, 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Catena: maglie alternate chiare e scure
+  const links = 5;
+  const endY = s.by - R + 2;
+  for (let i = 1; i < links; i++) {
+    const t = i / links;
+    const x = s.ax + (s.bx - s.ax) * t;
+    const y = s.ay + (endY - s.ay) * t + Math.sin(t * Math.PI) * s.sag;
+    ctx.fillStyle = i % 2 ? "#9ca3af" : "#6b7280";
+    ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2);
+  }
+
+  // Palla di ferro
+  ctx.fillStyle = "#0b0f19";
+  ctx.beginPath();
+  ctx.arc(s.bx, s.by, R + 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#374151";
+  ctx.beginPath();
+  ctx.arc(s.bx, s.by, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(Math.round(s.bx), Math.round(s.by) + 1, 3, 3);
+  ctx.fillStyle = "#d1d5db";
+  ctx.fillRect(Math.round(s.bx) - 3, Math.round(s.by) - 3, 2, 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(Math.round(s.bx) - 3, Math.round(s.by) - 3, 1, 1);
+}
+
+/*
+ * Icona del power-up in pixel art (pixel più piccoli degli sprite):
+ * cavigliera aperta in alto, catena e palla di ferro con riflesso.
+ */
+const SHACKLE_ICON = [
+  ".GGGG.....",
+  "G....G....",
+  "G....G....",
+  ".GGgG.....",
+  "....g.....",
+  ".....G....",
+  "....OOOO..",
+  "...OBWBBO.",
+  "..OBWBBBbO",
+  "..OBBBBBbO",
+  "..OBBBBbbO",
+  "...ObbbbO.",
+  "....OOOO.."
+];
+const SHACKLE_ICON_PALETTE = {
+  G: "#d1d5db", g: "#6b7280", O: "#0b0f19", B: "#4b5563", b: "#1f2937", W: "#f9fafb"
+};
+
+/*
+ * drawShackleIcon(cx, cy, px): disegna l'icona centrata in (cx, cy),
+ * con pixel grandi "px".
+ */
+function drawShackleIcon(cx, cy, px) {
+  const left = Math.round(cx - (SHACKLE_ICON[0].length * px) / 2);
+  const top = Math.round(cy - (SHACKLE_ICON.length * px) / 2);
+  for (let r = 0; r < SHACKLE_ICON.length; r++) {
+    for (let c = 0; c < SHACKLE_ICON[r].length; c++) {
+      const color = SHACKLE_ICON_PALETTE[SHACKLE_ICON[r][c]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(left + c * px, top + r * px, px, px);
+    }
+  }
+}
+
+/*
+ * drawShackleTile(t): il power-up sulla mappa, con alone arancio pulsante
+ * e l'icona che fluttua su e giù.
+ */
+function drawShackleTile(t) {
+  const cx = t.x * TILE + TILE / 2;
+  const cy = t.y * TILE + TILE / 2;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+
+  ctx.save();
+  const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, TILE / 2);
+  glow.addColorStop(0, `rgba(251, 146, 60, ${0.25 + 0.3 * pulse})`);
+  glow.addColorStop(1, "rgba(251, 146, 60, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
+  ctx.shadowColor = "#fb923c";
+  ctx.shadowBlur = 6 + 6 * pulse;
+  drawShackleIcon(cx, cy + Math.round(Math.sin(now / 300) * 2), 2);
+  ctx.restore();
+}
+
+/*
+ * drawShackleHud(): mentre l'effetto è attivo, in alto a destra della mappa
+ * un riquadro con l'icona, i secondi rimanenti e una barra che si accorcia.
+ * Negli ultimi 3 secondi il numero diventa rosso e lampeggia.
+ */
+function drawShackleHud() {
+  if (shackleTimeLeft <= 0) return;
+
+  const w = 92;
+  const h = 42;
+  const x = canvas.width - w - 8;
+  const y = 8;
+  const seconds = Math.ceil(shackleTimeLeft / 1000);
+  const ending = seconds <= 3;
+  const color = ending ? "#f87171" : "#fb923c";
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+  ctx.fillRect(x, y, w, h);
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  ctx.restore();
+
+  drawShackleIcon(x + 20, y + 18, 2);
+
+  if (!ending || blink(200)) {
+    ctx.font = '14px "Press Start 2P", monospace';
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#000000";
+    ctx.fillText(String(seconds).padStart(2, "0"), x + 44, y + 20);
+    ctx.fillStyle = ending ? "#f87171" : "#ffffff";
+    ctx.fillText(String(seconds).padStart(2, "0"), x + 42, y + 18);
+  }
+
+  // Barra del tempo rimanente
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(x + 6, y + h - 7, w - 12, 3);
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 6, y + h - 7, Math.round((w - 12) * shackleTimeLeft / SHACKLE_DURATION), 3);
+}
+
+/*
+ * spawnShackleEffect(t): quando Maigret raccoglie il power-up, scintille
+ * color acciaio e la scritta "PALLA AL PIEDE!" (tenuta dentro il canvas).
+ */
+function spawnShackleEffect(t) {
+  const cx = t.x * TILE + TILE / 2;
+  const cy = t.y * TILE + TILE / 2;
+
+  for (let i = 0; i < 16; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 0.05 + Math.random() * 0.12;
+    effects.push({
+      type: "spark", x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 600, max: 600, color: i % 2 ? "#9ca3af" : "#fb923c"
+    });
+  }
+  const half = 95; // metà larghezza della scritta a 12px
+  const tx = Math.min(Math.max(cx, half), canvas.width - half);
+  effects.push({ type: "text", x: tx, y: cy - 12, vx: 0, vy: -0.035, life: 1200, max: 1200, text: "PALLA AL PIEDE!" });
+}
+
+/*
  * drawSpriteScaled(cx, feetY, scale, opts): come drawSprite ma ingrandito
  * (per le schermate, dove i personaggi sono più grandi che in gioco).
  */
@@ -756,13 +1039,13 @@ function drawSpriteScaled(cx, feetY, scale, opts) {
 }
 
 /*
- * drawCharacter(entity, sprite, palette, pipe): disegna un personaggio del
- * gioco nella sua posizione fluida (presa da getVisual).
+ * drawCharacter(entity, sprite, palette, pipe, shackled): disegna un personaggio
+ * del gioco nella sua posizione fluida (presa da getVisual).
  */
-function drawCharacter(entity, sprite, palette, pipe = false) {
+function drawCharacter(entity, sprite, palette, pipe = false, shackled = false) {
   const v = getVisual(entity);
   drawSprite(v.rx * TILE + TILE / 2, Math.round(v.ry * TILE + TILE - 2), {
-    sprite, palette, pipe, dir: v.dir, walking: isWalking(v), walkTime: v.walkTime
+    sprite, palette, pipe, shackled, dir: v.dir, walking: isWalking(v), walkTime: v.walkTime
   });
 }
 
@@ -1494,16 +1777,19 @@ function draw() {
   if (background) ctx.drawImage(background, 0, 0);
 
   for (const e of game.exits) drawExit(e);
+  for (const t of shackleTiles) if (t.available) drawShackleTile(t);
 
   // Personaggi, ordinati per riga disegnata
+  const shackled = shackleTimeLeft > 0;
   const actors = game.criminals
     .filter(c => !c.arrested)
-    .map(c => ({ entity: c, sprite: SPRITES.criminal, palette: criminalPalette(c.color), pipe: false }));
-  actors.push({ entity: game.player, sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, pipe: true });
+    .map(c => ({ entity: c, sprite: SPRITES.criminal, palette: criminalPalette(c.color), pipe: false, shackled }));
+  actors.push({ entity: game.player, sprite: SPRITES.maigret, palette: MAIGRET_PALETTE, pipe: true, shackled: false });
   actors.sort((a, b) => getVisual(a.entity).ry - getVisual(b.entity).ry);
-  for (const a of actors) drawCharacter(a.entity, a.sprite, a.palette, a.pipe);
+  for (const a of actors) drawCharacter(a.entity, a.sprite, a.palette, a.pipe, a.shackled);
 
   drawEffects();
+  drawShackleHud();
 
   if (game.gameOver) {
     if (gameLost) drawGameOverScreen();
@@ -1527,7 +1813,9 @@ function draw() {
  *   - Giocatore: al massimo un passo ogni playerDelay ms. Legge i tasti premuti e
  *     sceglie UNA sola direzione (priorità: su, giù, sinistra, destra — niente
  *     diagonali); se c'è una direzione, muove Maigret e memorizza l'istante del passo.
- *   - Criminali: si muovono tutti insieme ogni criminalDelay ms.
+ *   - Palla al piede: scorre il countdown dell'effetto.
+ *   - Criminali: si muovono tutti insieme ogni criminalDelay ms (il doppio
+ *     mentre hanno la palla al piede).
  *   - Grafica: fa scorrere le posizioni disegnate verso quelle vere.
  * - Aggiorna gli effetti (fermi in pausa), lancia i fuochi d'artificio a
  *   gioco completato, ridisegna e si ri-prenota per il fotogramma successivo.
@@ -1554,14 +1842,16 @@ function loop(time) {
     }
   }
 
-  if (active && !game.gameOver && time - lastEnemyMove > criminalDelay) {
+  if (active && !game.gameOver) updateShackle(dt);
+
+  if (active && !game.gameOver && time - lastEnemyMove > currentCriminalDelay()) {
     moveCriminals(game);
     lastEnemyMove = time;
   }
 
   if (active) {
     updateVisual(game.player, playerDelay, dt);
-    for (const c of game.criminals) updateVisual(c, criminalDelay, dt);
+    for (const c of game.criminals) updateVisual(c, currentCriminalDelay(), dt);
   }
   if (!paused) updateEffects(dt);
   if (screen === "playing" && isGameWon() && Math.random() < dt / 350) spawnFirework();
