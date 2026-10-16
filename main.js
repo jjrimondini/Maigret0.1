@@ -135,10 +135,20 @@ const game = {
  * - lastPlayerMove / lastEnemyMove: istante (in ms) dell'ultimo passo del giocatore
  *   e dei criminali, usati per regolarne la velocità
  * - keys: mappa dei tasti attualmente premuti (es. keys.w === true mentre W è giù)
+ * - DIRS: per ogni tasto di direzione, lo spostamento [dx, dy] che produce
+ * - dirKeys: tasti di direzione tenuti premuti, in ordine di pressione
+ *   (l'ultimo è il più recente), così con due tasti insieme funzionano entrambi
  */
 let lastPlayerMove = 0;
 let lastEnemyMove = 0;
 const keys = {};
+const DIRS = {
+  arrowup: [0, -1], w: [0, -1],
+  arrowdown: [0, 1], s: [0, 1],
+  arrowleft: [-1, 0], a: [-1, 0],
+  arrowright: [1, 0], d: [1, 0]
+};
+const dirKeys = [];
 
 /*
  * Variabili della grafica (non toccano la logica di gioco):
@@ -491,6 +501,11 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
   }
   keys[k] = true;
+  if (k in DIRS && !e.repeat) {
+    const i = dirKeys.indexOf(k);
+    if (i !== -1) dirKeys.splice(i, 1);
+    dirKeys.push(k);
+  }
 
   if (screen === "title") {
     if (e.key === "Enter") startGame();
@@ -520,9 +535,15 @@ document.getElementById("restart").addEventListener("click", e => {
   startGame();
   e.currentTarget.blur();
 });
-document.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
+document.addEventListener("keyup", e => {
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  const i = dirKeys.indexOf(k);
+  if (i !== -1) dirKeys.splice(i, 1);
+});
 window.addEventListener("blur", () => {
   for (const k in keys) keys[k] = false;
+  dirKeys.length = 0;
   if (screen === "playing" && !game.gameOver && !paused) togglePause();
 });
 
@@ -1961,9 +1982,9 @@ function draw() {
  * loop(time): il ciclo di gioco, chiamato dal browser circa 60 volte al secondo
  * tramite requestAnimationFrame; "time" è il tempo trascorso in millisecondi.
  * - Solo durante una partita non in pausa:
- *   - Giocatore: al massimo un passo ogni playerDelay ms. Legge i tasti premuti e
- *     sceglie UNA sola direzione (priorità: su, giù, sinistra, destra — niente
- *     diagonali); se c'è una direzione, muove Maigret e memorizza l'istante del passo.
+ *   - Giocatore: al massimo un passo ogni playerDelay ms. Sceglie UNA sola
+ *     direzione (niente diagonali): l'ultimo tasto premuto, oppure un altro tasto
+ *     tenuto premuto se lì c'è un muro; muove Maigret e memorizza l'istante del passo.
  *   - Power-up: scorrono i countdown di palla al piede e sbarre.
  *   - Criminali: si muovono tutti insieme ogni criminalDelay ms (il doppio
  *     mentre hanno la palla al piede).
@@ -1979,11 +2000,17 @@ function loop(time) {
   const active = screen === "playing" && !paused;
 
   if (active && !game.gameOver && time - lastPlayerMove > playerDelay) {
+    // l'ultimo tasto premuto ha la precedenza; se lì c'è un muro si prova
+    // l'altro tenuto premuto. Se sono tutti bloccati Maigret si gira soltanto.
     let dx = 0, dy = 0;
-    if (keys.arrowup || keys.w) dy = -1;
-    else if (keys.arrowdown || keys.s) dy = 1;
-    else if (keys.arrowleft || keys.a) dx = -1;
-    else if (keys.arrowright || keys.d) dx = 1;
+    for (let i = dirKeys.length - 1; i >= 0; i--) {
+      const [ddx, ddy] = DIRS[dirKeys[i]];
+      if (!wall(game, game.player.x + ddx, game.player.y + ddy)) {
+        [dx, dy] = [ddx, ddy];
+        break;
+      }
+    }
+    if (!dx && !dy && dirKeys.length) [dx, dy] = DIRS[dirKeys[dirKeys.length - 1]];
 
     if (dx || dy) {
       // Maigret si gira verso la direzione premuta anche se davanti c'è un muro
