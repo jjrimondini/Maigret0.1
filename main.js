@@ -47,6 +47,23 @@ const SHACKLE_SLOWDOWN = 2;
 const BARS_TILE = "S";
 const BARS_DURATION = 10000;
 
+/*
+ * Power-up "orologio da taschino": nella mappa è la lettera "T" (tempo).
+ * Quando Maigret ci passa sopra, i timer dei power-up già attivi ripartono
+ * da capo. L'effetto è istantaneo (nessun timer) e l'icona non sparisce mai.
+ * Per i criminali la "T" è un normale corridoio: ci passano sopra senza effetti.
+ */
+const CLOCK_TILE = "T";
+
+/*
+ * Power-up "centrale di polizia": nella mappa è la lettera "Q" (questura).
+ * Quando Maigret ci passa sopra, per POLICE_DURATION ms ogni criminale
+ * arrestato viene portato in questura: è rimosso dalla partita e i compagni
+ * non possono più liberarlo. Per i criminali la "Q" è un normale corridoio.
+ */
+const POLICE_TILE = "Q";
+const POLICE_DURATION = 10000;
+
 
 /*
 *importazioni variabili di livello da level.js
@@ -65,6 +82,9 @@ let shackleTiles = [];   // caselle del power-up: { x, y, available }
 let shackleTimeLeft = 0; // ms rimanenti dell'effetto (> 0 = criminali incatenati)
 let barsTiles = [];      // caselle del power-up sbarre: { x, y, available }
 let barsTimeLeft = 0;    // ms rimanenti dell'effetto (> 0 = uscite sbarrate)
+let clockTiles = [];     // caselle dell'orologio da taschino: { x, y }
+let policeTiles = [];    // caselle della centrale di polizia: { x, y, available }
+let policeTimeLeft = 0;  // ms rimanenti dell'effetto (> 0 = arresti definitivi)
 let lockedMap = [];      // copia della mappa con le uscite trasformate in muri
 
 /*
@@ -176,6 +196,21 @@ let paused = false;
 let escapedCriminal = null;
 
 /*
+ * normalizeMap(level): restituisce una copia della mappa con tutte le righe
+ * lunghe come la prima. Le righe più lunghe vengono tagliate, quelle più
+ * corte completate con muri "#". Così un carattere in più o in meno in una
+ * riga non blocca il livello; nella console resta un avviso per sistemarlo.
+ */
+function normalizeMap(level) {
+  const cols = level.map[0].length;
+  return level.map.map((row, y) => {
+    if (row.length === cols) return row;
+    console.warn(`${level.name}: la riga ${y} è lunga ${row.length} invece di ${cols}`);
+    return row.length > cols ? row.slice(0, cols) : row.padEnd(cols, "#");
+  });
+}
+
+/*
  * funzione loadlevel per caricare i livelli da levels.js
  * Imposta la mappa, le celle, i ritardi di movimento, il giocatore e i criminali.
  * Aggiorna anche il testo del livello e lo stato iniziale della partita.
@@ -189,13 +224,16 @@ function loadLevel(index) {
 
   const level = levels[index];
 
-  map = level.map;
+  map = normalizeMap(level);
   cellPositions = findTiles(map, "C");
   game.exits = findTiles(map, "E")
   shackleTiles = findTiles(map, SHACKLE_TILE).map(t => ({ ...t, available: true }));
   shackleTimeLeft = 0;
   barsTiles = findTiles(map, BARS_TILE).map(t => ({ ...t, available: true }));
   barsTimeLeft = 0;
+  clockTiles = findTiles(map, CLOCK_TILE);
+  policeTiles = findTiles(map, POLICE_TILE).map(t => ({ ...t, available: true }));
+  policeTimeLeft = 0;
   // Copia (non modifica l'array di levels.js, che serve intatto se si riprova il livello)
   lockedMap = map.map(row => row.replaceAll("E", "#"));
 
@@ -203,10 +241,6 @@ function loadLevel(index) {
   game.map = map;
   game.ROWS = map.length;
   game.COLS = map[0].length;
-  // Tutte le righe devono avere la stessa lunghezza, altrimenti la mappa è "storta".
-  if (map.some(row => row.length !== game.COLS)) {
-    throw new Error(`Nel livello ${level.name} le righe della mappa non sono tutte lunghe uguali`);
-  }
 
   // Il canvas si adatta alla mappa del livello.
   canvas.width = game.COLS * TILE;
@@ -289,6 +323,8 @@ function movePlayer(dx, dy) {
     game.player.y = ny;
     checkShackle();
     checkBars();
+    checkPolice();
+    checkClock();
     checkCapture();
   }
 }
@@ -331,6 +367,51 @@ function checkBars() {
 }
 
 /*
+ * checkClock(): se Maigret entra in una casella con l'orologio da taschino,
+ * i timer dei power-up già attivi tornano al massimo. L'orologio resta sulla
+ * mappa e la scritta compare anche se non c'era nulla da ricaricare.
+ */
+function checkClock() {
+  const tile = clockTiles.find(t => t.x === game.player.x && t.y === game.player.y);
+  if (!tile) return;
+
+  if (shackleTimeLeft > 0) shackleTimeLeft = SHACKLE_DURATION;
+  if (barsTimeLeft > 0) barsTimeLeft = BARS_DURATION;
+  if (policeTimeLeft > 0) policeTimeLeft = POLICE_DURATION;
+  spawnPowerUpEffect(tile, "TEMPO RICARICATO!", ["#fde68a", "#38bdf8"]);
+}
+
+/*
+ * checkPolice(): se Maigret entra in una casella con la centrale di polizia
+ * (ancora disponibile), la raccoglie: per POLICE_DURATION ms ogni criminale
+ * arrestato viene rimosso dalla partita (vedi checkCapture).
+ * Se l'effetto era già attivo, il countdown riparte da capo.
+ */
+function checkPolice() {
+  const tile = policeTiles.find(t =>
+    t.available && t.x === game.player.x && t.y === game.player.y
+  );
+  if (!tile) return;
+
+  tile.available = false;
+  policeTimeLeft = POLICE_DURATION;
+  spawnPowerUpEffect(tile, "CENTRALE DI POLIZIA!", ["#3b82f6", "#ef4444"]);
+}
+
+/*
+ * updatePolice(dt): fa scorrere il countdown della centrale di polizia.
+ * Allo scadere l'effetto svanisce e le icone tornano disponibili sulla mappa.
+ */
+function updatePolice(dt) {
+  if (policeTimeLeft <= 0) return;
+  policeTimeLeft -= dt;
+  if (policeTimeLeft <= 0) {
+    policeTimeLeft = 0;
+    for (const t of policeTiles) t.available = true;
+  }
+}
+
+/*
  * updateBars(dt): fa scorrere il countdown delle sbarre. Allo scadere le
  * uscite si riaprono (torna la mappa originale) e le icone ricompaiono.
  */
@@ -362,6 +443,8 @@ function updateShackle(dt) {
  * criminale ancora libero. In quel caso il criminale viene arrestato:
  * +1 arresto, +100 punti, testo di stato aggiornato e il criminale viene
  * rimandato nella sua cella (da quel momento non viene più disegnato).
+ * Se la centrale di polizia è attiva, l'arrestato viene anche "rimosso"
+ * (c.removed): resta arrestato per sempre e i compagni non possono liberarlo.
  * Se tutti i criminali sono stati arrestati, la partita finisce con la vittoria.
  */
 function checkCapture() {
@@ -376,6 +459,10 @@ function checkCapture() {
       game.score += 100;
       checkBonusLife();
       spawnCaptureEffect(c);
+      if (policeTimeLeft > 0) {
+        c.removed = true;
+        spawnPowerUpEffect(c, "IN QUESTURA!", ["#3b82f6", "#ef4444"]);
+      }
       c.x = c.home.x;
       c.y = c.home.y;
     }
@@ -975,6 +1062,8 @@ function drawBallAndChain(s) {
  * Icone dei power-up in pixel art (pixel più piccoli degli sprite).
  * - Palla al piede: cavigliera aperta in alto, catena e palla di ferro con riflesso.
  * - Sbarre: telaio d'acciaio con quattro sbarre, una traversa e un lucchetto dorato.
+ * - Orologio da taschino: anello e corona, cassa dorata, quadrante con lancette.
+ * - Centrale di polizia: edificio blu con lampeggiante rosso/blu, finestre e porta.
  */
 const SHACKLE_ICON = [
   ".GGGG.....",
@@ -1011,6 +1100,44 @@ const BARS_ICON = [
 ];
 const BARS_ICON_PALETTE = {
   F: "#e5e7eb", G: "#9ca3af", L: "#facc15", l: "#a16207", K: "#111827"
+};
+
+const CLOCK_ICON = [
+  "....lll....",
+  "....l.l....",
+  ".....L.....",
+  "...LLLLL...",
+  "..LWWKWWL..",
+  ".LWWWKWWWL.",
+  ".LWWWKWWWL.",
+  ".LKWWKKKWL.",
+  ".LWWWWWWWL.",
+  ".LWWWWWWWL.",
+  "..LWWKWWl..",
+  "...lLLLl...",
+  "....lll...."
+];
+const CLOCK_ICON_PALETTE = {
+  L: "#facc15", l: "#a16207", W: "#f9fafb", K: "#111827"
+};
+
+const POLICE_ICON = [
+  "....RRBB...",
+  "....RRBB...",
+  "..PPPPPPP..",
+  ".PPPPPPPPP.",
+  "PPPPPPPPPPP",
+  ".DDDDDDDDD.",
+  ".DYDDYDDYD.",
+  ".DYDDYDDYD.",
+  ".DDDDDDDDD.",
+  ".DYDKKKDYD.",
+  ".DYDKKKDYD.",
+  ".DDDKKKDDD.",
+  "WWWWWWWWWWW"
+];
+const POLICE_ICON_PALETTE = {
+  R: "#ef4444", B: "#3b82f6", P: "#1e3a8a", D: "#2563eb", Y: "#fde68a", K: "#0b0f19", W: "#e5e7eb"
 };
 
 /*
@@ -1108,6 +1235,9 @@ function drawPowerUpHud() {
   }
   if (barsTimeLeft > 0) {
     drawTimerHud(slot++, BARS_ICON, BARS_ICON_PALETTE, barsTimeLeft, BARS_DURATION, "#4ade80");
+  }
+  if (policeTimeLeft > 0) {
+    drawTimerHud(slot++, POLICE_ICON, POLICE_ICON_PALETTE, policeTimeLeft, POLICE_DURATION, "#3b82f6");
   }
 }
 
@@ -1950,6 +2080,12 @@ function draw() {
   for (const t of barsTiles) {
     if (t.available) drawPowerUpTile(t, BARS_ICON, BARS_ICON_PALETTE, "74, 222, 128", "#4ade80");
   }
+  for (const t of policeTiles) {
+    if (t.available) drawPowerUpTile(t, POLICE_ICON, POLICE_ICON_PALETTE, "59, 130, 246", "#3b82f6");
+  }
+  for (const t of clockTiles) {
+    drawPowerUpTile(t, CLOCK_ICON, CLOCK_ICON_PALETTE, "56, 189, 248", "#38bdf8");
+  }
 
   // Personaggi, ordinati per riga disegnata
   const shackled = shackleTimeLeft > 0;
@@ -2023,6 +2159,7 @@ function loop(time) {
   if (active && !game.gameOver) {
     updateShackle(dt);
     updateBars(dt);
+    updatePolice(dt);
   }
 
   if (active && !game.gameOver && time - lastEnemyMove > currentCriminalDelay()) {

@@ -2,12 +2,13 @@
 /*
  * Import delle funzioni di supporto da criminal-utils.js:
  * - chooseCellTarget: sceglie la cella di un compagno arrestato da raggiungere
+ * - isPrisoner: dice se un criminale è in cella e si può ancora liberare
  * - evadeMaigret: fa un passo allontanandosi da Maigret e verso un target
  * - findPath: percorso più breve tra due caselle
  * - findSafePath: percorso che preferisce stare lontano da Maigret
  * - wall: dice se una casella è un muro o fuori mappa
  */
-import { chooseCellTarget, evadeMaigret, findPath, findSafePath, wall } from "./criminal-utils.js";
+import { chooseCellTarget, evadeMaigret, findPath, findSafePath, isPrisoner, wall } from "./criminal-utils.js";
 
 // Funzioni condivise internamente al modulo.
 /*
@@ -199,7 +200,7 @@ function updateFreedPrisonersStatus(game) {
  *    perdono il target e si aggiorna la riga di stato.
  */
 function tryFreePrisoner(game, criminal) {
-  const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
+  const prisoners = game.criminals.filter(other => isPrisoner(other) && other !== criminal);
   if (!prisoners.length) return false;
 
   const targetStillOccupied = criminal.target && prisoners.some(other =>
@@ -240,7 +241,7 @@ function tryFreePrisoner(game, criminal) {
   }
 
   const prisoner = game.criminals.find(other =>
-    other.arrested &&
+    isPrisoner(other) &&
     other.home.x === criminal.target.x &&
     other.home.y === criminal.target.y
   );
@@ -291,7 +292,7 @@ export function moveFurbo(game, criminal) {
   return;
 }
 
-  const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
+  const prisoners = game.criminals.filter(other => isPrisoner(other) && other !== criminal);
   if (!prisoners.length) {
     fleeFromMaigret(game, criminal);
     game.checkCapture();
@@ -325,7 +326,7 @@ export function moveImprevedibile(game, criminal) {
     return;
   }
 
-  const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
+  const prisoners = game.criminals.filter(other => isPrisoner(other) && other !== criminal);
   if (!prisoners.length) {
     fleeFromMaigret(game, criminal);
     game.checkCapture();
@@ -354,7 +355,7 @@ export function moveTemerario(game, criminal) {
   return;
 }
 
-  const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
+  const prisoners = game.criminals.filter(other => isPrisoner(other) && other !== criminal);
   if (!prisoners.length) {
     fleeFromMaigret(game, criminal);
     game.checkCapture();

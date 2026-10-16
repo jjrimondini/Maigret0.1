@@ -132,6 +132,15 @@ export function findSafePath(game, start, target, criminal) {
 }
 
 /*
+ * isPrisoner(c): true se il criminale è in cella e si può ancora liberare.
+ * Chi è stato arrestato con la centrale di polizia attiva ha c.removed:
+ * resta arrestato ma i compagni non vanno più a liberarlo.
+ */
+export function isPrisoner(c) {
+  return c.arrested && !c.removed;
+}
+
+/*
  * chooseCellTarget(game, criminal)
  * Sceglie verso quale cella deve dirigersi il criminale, cioè la cella
  * ("home") di un compagno già arrestato. Non restituisce nulla: scrive la
@@ -146,7 +155,7 @@ export function findSafePath(game, start, target, criminal) {
  * "home" del prigioniero.
  */
 export function chooseCellTarget(game, criminal) {
-  const prisoners = game.criminals.filter(other => other.arrested && other !== criminal);
+  const prisoners = game.criminals.filter(other => isPrisoner(other) && other !== criminal);
   if (prisoners.length === 0) {
     criminal.target = null;
     return;
